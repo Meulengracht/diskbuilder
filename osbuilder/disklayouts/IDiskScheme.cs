@@ -21,7 +21,7 @@ namespace OSBuilder.DiskLayouts
         /**
          * Adds a new partition of the filesystem given, with the given size
          */
-        bool AddPartition(FileSystems.IFileSystem fileSystem, ulong sectorCount);
+        bool AddPartition(FileSystems.IFileSystem fileSystem, ulong sectorCount, string vbrImage, string reservedSectorsImage);
 
         /** 
          * Retrieves the number of free sectors available for the next partition

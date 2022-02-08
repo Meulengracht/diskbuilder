@@ -112,7 +112,7 @@ namespace OSBuilder.DiskLayouts
             _disk = null;
         }
 
-        public bool AddPartition(FileSystems.IFileSystem fileSystem, ulong sectorCount)
+        public bool AddPartition(FileSystems.IFileSystem fileSystem, ulong sectorCount, string vbrImage, string reservedSectorsImage)
         {
             ulong partitionSize = sectorCount;
             if (_disk == null || fileSystem == null)
@@ -125,7 +125,7 @@ namespace OSBuilder.DiskLayouts
             }
 
             // Initialize the file-system
-            fileSystem.Initialize(_disk, _firstUsableSector + _allocatedSectors, partitionSize);
+            fileSystem.Initialize(_disk, _firstUsableSector + _allocatedSectors, partitionSize, vbrImage, reservedSectorsImage);
             
             // Add sectors allocated
             _fileSystems.Add(fileSystem);

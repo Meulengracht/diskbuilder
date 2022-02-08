@@ -157,7 +157,7 @@ namespace OSBuilder.DiskLayouts
         /**
          * Adds a new partition of the filesystem given, with the given size
          */
-        public bool AddPartition(FileSystems.IFileSystem fileSystem, ulong sectorCount)
+        public bool AddPartition(FileSystems.IFileSystem fileSystem, ulong sectorCount, string vbrImage, string reservedSectorsImage)
         {
             ulong partitionSize = sectorCount;
             if (_disk == null || fileSystem == null || _fileSystems.Count == MAX_PARTITONS)
@@ -170,7 +170,7 @@ namespace OSBuilder.DiskLayouts
             }
 
             // Initialize the file-system
-            fileSystem.Initialize(_disk, _sectorsAllocated, partitionSize);
+            fileSystem.Initialize(_disk, _sectorsAllocated, partitionSize, vbrImage, reservedSectorsImage);
             
             // Add sectors allocated
             _fileSystems.Add(fileSystem);

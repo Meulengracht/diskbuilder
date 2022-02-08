@@ -11,10 +11,10 @@
 #     predefined hybrid MBR bootsector that automatically loads the first
 #     partition VBR marked as legacy boot ('boot' attribute).
 #
-scheme: MBR
-size: 256MB
+scheme: GPT
+size: 1GB
 
-# define partitions for disk
+# initialize partitions for disk
 partitions:
   - label: system
 
@@ -22,7 +22,7 @@ partitions:
     # in the partition being of FAT16. The minimum size of FAT is 64mb. 
     type: FAT
     guid: EA2CBEBB-2B4E-49B5-9A07-043EE82836E7
-    size: 256MB
+    size: 1GB
 
     # Attributes can be: boot, readonly, shadow, noautomount.
     # If boot is specified, the 'vbr-image' and optionally the 'reserved-sectors-image'

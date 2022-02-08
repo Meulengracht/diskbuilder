@@ -307,6 +307,11 @@ namespace OSBuilder
             var attributes = GetFileSystemAttributes(partition.Attributes);
             Guid guid;
 
+            // Assert that vbr image is specified in case of boot
+            if (attributes.HasFlag(FileSystems.FileSystemAttributes.Boot) && string.IsNullOrEmpty(partition.VbrImage))
+                throw new Exception($"{partition.Label}: No VBR image specified for boot partition");
+            
+            // If no guid is provided we would like to generate one
             if (!string.IsNullOrEmpty(partition.Guid))
                 guid = Guid.Parse(partition.Guid);
             else
@@ -392,10 +397,10 @@ namespace OSBuilder
                         if (diskScheme.GetFreeSectorCount() < partitionSizeSectors)
                             throw new Exception($"Not enough free space for partition {partition.Label}");
 
-                        diskScheme.AddPartition(fileSystem, partitionSizeSectors);
+                        diskScheme.AddPartition(fileSystem, partitionSizeSectors, partition.VbrImage, partition.ReservedSectorsImage);
                     }
                     else
-                        diskScheme.AddPartition(fileSystem, diskScheme.GetFreeSectorCount());
+                        diskScheme.AddPartition(fileSystem, diskScheme.GetFreeSectorCount(), partition.VbrImage, partition.ReservedSectorsImage);
                     
                     foreach (var source in partition.Sources)
                     {

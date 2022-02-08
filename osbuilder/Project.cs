@@ -18,8 +18,10 @@ namespace OSBuilder
         public string Label { get; set; }
         public string Type { get; set; }
         public string Guid { get; set; }
-        public List<string> Attributes { get; set; }
         public string Size { get; set; }
+        public List<string> Attributes { get; set; }
+        public string VbrImage { get; set; }
+        public string ReservedSectorsImage { get; set; }
         public List<ProjectSource> Sources { get; set; }
     }
 

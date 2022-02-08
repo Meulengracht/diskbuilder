@@ -4,10 +4,7 @@ namespace OSBuilder.FileSystems
 {
     public interface IFileSystem : IDisposable
     {
-        /**
-         * Initializes the filesystem instance at the given position on the given disk
-         */
-        void Initialize(IDisk disk, ulong startSector, ulong sectorCount);
+        void Initialize(IDisk disk, ulong startSector, ulong sectorCount, string vbrImage, string reservedSectorsImage);
 
         /**
          * Formats the partition with the filesystem - wipes all data from the partition

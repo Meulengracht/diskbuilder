@@ -40,6 +40,8 @@ namespace OSBuilder.FileSystems.MFS
         private ulong _sectorCount = 0;
         private ushort _reservedSectorCount = 0;
         private ushort _bucketSize = 0;
+        private string _vbrImage = null;
+        private string _reservedSectorsImage = null;
 
         uint CalculateChecksum(Byte[] Data, int SkipIndex, int SkipLength)
         {
@@ -641,11 +643,28 @@ namespace OSBuilder.FileSystems.MFS
             
         }
 
-        public void Initialize(IDisk disk, ulong startSector, ulong sectorCount)
+        public void Initialize(IDisk disk, ulong startSector, ulong sectorCount, string vbrImage, string reservedSectorsImage)
         {
             _disk = disk;
             _sector = startSector;
             _sectorCount = sectorCount;
+            _vbrImage = vbrImage;
+            _reservedSectorsImage = reservedSectorsImage;
+            _reservedSectorCount = 1; // for the VBR
+
+            // determine the size of the reserved sectors
+            if (_bootable) {
+                try {
+                    if (!string.IsNullOrEmpty(reservedSectorsImage))
+                    {
+                        var fileInfo = new FileInfo(reservedSectorsImage);
+                        _reservedSectorCount += (ushort)((fileInfo.Length / _disk.Geometry.BytesPerSector) + 1);
+                    }
+                }
+                catch (Exception ex) {
+                    throw new Exception($"{nameof(FileSystem)} | {nameof(Initialize)} | Failed to determine the size of the reserved sectors | {ex}");
+                }
+            }
         }
 
         private ulong BucketToSector(uint bucket)
@@ -845,8 +864,8 @@ namespace OSBuilder.FileSystems.MFS
         public void InstallBootloaders()
         {
             // Load up boot-sector
-            Console.WriteLine("MakeBoot - loading bootsector (stage1.sys)");
-            byte[] bootsector = File.ReadAllBytes("deploy/stage1.sys");
+            Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Loading stage1 bootloader ({_vbrImage})");
+            byte[] bootsector = File.ReadAllBytes(_vbrImage);
 
             // Modify boot-sector by preserving the header 44
             byte[] existingSectorContent = _disk.Read(_sector, 1);
@@ -856,38 +875,36 @@ namespace OSBuilder.FileSystems.MFS
             bootsector[8] = 0x1;
 
             // Flush the modified sector back to disk
-            Console.WriteLine("MakeBoot - writing bootsector to disk");
+            Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Writing stage1 bootloader");
             _disk.Write(bootsector, _sector, true);
 
             // Write stage2 to disk
-            Console.WriteLine("MakeBoot - loading stage2 (stage2.sys)");
-            byte[] stage2Data = File.ReadAllBytes("deploy/stage2.sys");
-            byte[] sectorAlignedBuffer = new Byte[((stage2Data.Length / _disk.Geometry.BytesPerSector) + 1) * _disk.Geometry.BytesPerSector];
-            stage2Data.CopyTo(sectorAlignedBuffer, 0);
+            if (!string.IsNullOrEmpty(_reservedSectorsImage))
+            {
+                Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Loading stage2 bootloader ({_reservedSectorsImage})");
+                byte[] stage2Data = File.ReadAllBytes(_reservedSectorsImage);
+                byte[] sectorAlignedBuffer = new Byte[((stage2Data.Length / _disk.Geometry.BytesPerSector) + 1) * _disk.Geometry.BytesPerSector];
+                stage2Data.CopyTo(sectorAlignedBuffer, 0);
 
-            // Make sure we allocate a sector-aligned buffer
-            Console.WriteLine("MakeBoot - writing stage2 to disk");
-            _disk.Write(sectorAlignedBuffer, _sector + 1, true);
+                // Make sure we allocate a sector-aligned buffer
+                Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Writing stage2 bootloader");
+                _disk.Write(sectorAlignedBuffer, _sector + 1, true);
+            }
         }
 
         public bool Format()
         {
-            _reservedSectorCount = 1; // VBR
-
             if (_disk == null)
                 return false;
 
             // Sanitize that bootloaders are present if the partition is marked bootable
             if (_bootable)
             {
-                if (!File.Exists("deploy/stage2.sys") || !File.Exists("deploy/stage1.sys"))
+                if (!File.Exists(_vbrImage))
                 {
-                    Console.WriteLine("Format - Bootloaders are missing in deploy folder (stage1.sys & stage2.sys)");
+                    Console.WriteLine($"{nameof(FileSystem)} | {nameof(Format)} | Bootloader {_vbrImage} is missing, cannot format partition");
                     return false;
                 }
-
-                byte[] stage2Buffer = File.ReadAllBytes("deploy/stage2.sys");
-                _reservedSectorCount += (ushort)((stage2Buffer.Length / _disk.Geometry.BytesPerSector) + 1);
             }
 
             ulong partitionSizeBytes = _sectorCount * _disk.Geometry.BytesPerSector;
