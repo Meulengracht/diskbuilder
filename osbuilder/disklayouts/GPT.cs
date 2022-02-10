@@ -77,12 +77,6 @@ namespace OSBuilder.DiskLayouts
             _disk = disk;
             _header = new GPTHeader();
 
-            if (!File.Exists("deploy/mbr-gpt.sys"))
-            {
-                Console.WriteLine("Format - GPT scheme requested but mbr-gpt.sys is not found (deploy/mbr-gpt.sys)");
-                return false;
-            }
-
             // ensure disk is open for read/write
             if (!_disk.IsOpen())
                 return false;
@@ -138,8 +132,8 @@ namespace OSBuilder.DiskLayouts
             if (_disk == null)
                 return false;
 
-            Console.WriteLine("Finalize - loading mbr (mbr-gpt.sys)");
-            byte[] mbr = File.ReadAllBytes("deploy/mbr-gpt.sys");
+            Console.WriteLine($"{nameof(MBR)} | {nameof(FinalizeLayout)} | Loading mbr (mbr-gpt.vbr)");
+            byte[] mbr = ResourceLoader.Load("mbr-gpt.vbr");
 
             _disk.Write(mbr, 0, true);
             return true;

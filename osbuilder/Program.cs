@@ -421,8 +421,8 @@ namespace OSBuilder
             DiscUtils.Complete.SetupHelper.SetupComplete();
 
             // Debug print header
-            Console.WriteLine("OS Installation Utility Software");
-            Console.WriteLine(" - use this tool to read, write and install MollenOS.\n");
+            Console.WriteLine("Disk Utility Software");
+            Console.WriteLine(" - Tool for creating and reading disk images.\n");
 
             // Parse arguments
             if (args != null && args.Length > 0) {

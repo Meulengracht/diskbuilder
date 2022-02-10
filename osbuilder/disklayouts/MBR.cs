@@ -36,12 +36,6 @@ namespace OSBuilder.DiskLayouts
         {
             _disk = disk;
 
-            if (!File.Exists("deploy/mbr.sys"))
-            {
-                Console.WriteLine("Format - MBR scheme requested but mbr.sys is not found (deploy/mbr.sys)");
-                return false;
-            }
-
             // ensure disk is open for read/write
             if (!_disk.IsOpen())
                 return false;
@@ -135,8 +129,8 @@ namespace OSBuilder.DiskLayouts
         private void FinalizeLayout()
         {
             // Load up mbr and build the partition table
-            Console.WriteLine("Finalize - loading mbr (mbr.sys)");
-            byte[] mbr = File.ReadAllBytes("deploy/mbr.sys");
+            Console.WriteLine($"{nameof(MBR)} | {nameof(FinalizeLayout)} | Loading mbr (mbr.vbr)");
+            byte[] mbr = ResourceLoader.Load("mbr.vbr");
             
             // Install partitions in the MBR
             for (int i = 0; i < 4; i++)

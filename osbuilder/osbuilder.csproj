@@ -10,4 +10,9 @@
     <PackageReference Include="YamlDotNet" Version="11.2.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="resources/mbr-gpt.vbr" />
+    <EmbeddedResource Include="resources/mbr.vbr" />
+  </ItemGroup>
+
 </Project>

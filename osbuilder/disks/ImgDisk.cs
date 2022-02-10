@@ -14,7 +14,7 @@ namespace OSBuilder
 
         private ulong _totalSectors = 0;
 
-        private String _imageName = "mollenos.img";
+        private String _imageName = "disk.img";
         private DiscUtils.VirtualDisk _diskHandle = null;
         private Stream _fileStream = null;
         private DiskGeometry _diskGeometry = null;

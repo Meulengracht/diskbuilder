@@ -14,7 +14,7 @@
 scheme: GPT
 size: 1GB
 
-# initialize partitions for disk
+# define partitions for disk
 partitions:
   - label: system
 
