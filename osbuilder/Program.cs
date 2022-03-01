@@ -405,9 +405,12 @@ namespace OSBuilder
                     else
                         diskScheme.AddPartition(fileSystem, diskScheme.GetFreeSectorCount(), partition.VbrImage, partition.ReservedSectorsImage);
                     
-                    foreach (var source in partition.Sources)
+                    if (partition.Sources != null)
                     {
-                        InstallSource(fileSystem, source);
+                        foreach (var source in partition.Sources)
+                        {
+                            InstallSource(fileSystem, source);
+                        }
                     }
                 }
             }
