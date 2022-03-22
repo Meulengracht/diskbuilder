@@ -360,11 +360,8 @@ namespace OSBuilder
             ulong diskSectorCount = GetSectorCountFromMB(512, diskSizeInMBytes);
             Console.WriteLine("size of disk: " + diskSizeInMBytes.ToString() + "mb");
             Console.WriteLine("sector count: " + diskSectorCount.ToString());
-            if (diskSizeInMBytes < 512)
-            {
-                Console.WriteLine("Disk size must be at least 512MB");
-                return -1;
-            }
+            if (diskSizeInMBytes < 64)
+                throw new Exception("Disk size must be at least 64mb");
 
             // Which kind of target?
             if (installationType.ToLower() == "live" && drives.Count > 0)
