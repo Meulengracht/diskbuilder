@@ -2,6 +2,7 @@
 using System.Collections;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 
 namespace OSBuilder
 {
@@ -38,76 +39,158 @@ namespace OSBuilder
             }
         }
 
+        static void InstallFile(FileSystems.IFileSystem fileSystem, ProjectSource source)
+        {
+            Console.WriteLine($"{nameof(Program)} | {nameof(InstallDirectory)} | Installing file: {source.Path}");
+
+            FileInfo fileInfo = GetFileInfo(source.Path);
+            if (fileInfo == null)
+                throw new Exception($"{nameof(Program)} | {nameof(InstallFile)} | ERROR: Source is not a valid path: {source.Path}");
+            if (!fileInfo.Attributes.HasFlag(FileAttributes.Normal))
+                throw new Exception($"{nameof(Program)} | {nameof(InstallFile)} | ERROR: Source is not a directory: {source.Path}");
+
+            var data = GetFileData(source.Path);
+            if (data == null)
+                throw new Exception($"{nameof(Program)} | {nameof(InstallFile)} | ERROR: Failed to read source: {source.Path}");
+            
+            var rootPath = Path.GetDirectoryName(source.Target);
+            if (!string.IsNullOrEmpty(rootPath))
+            {
+                if (!fileSystem.CreateDirectory(rootPath, 0))
+                    throw new Exception($"{nameof(Program)} | {nameof(InstallFile)} | ERROR: Failed to create directory: {rootPath}");
+            }
+
+            if (!fileSystem.CreateFile(source.Target, 0, data))
+                throw new Exception($"{nameof(Program)} | {nameof(InstallFile)} | ERROR: Failed to write file: {source.Target}");
+        }
+
+        static void InstallDirectory(FileSystems.IFileSystem fileSystem, ProjectSource source)
+        {
+            Console.WriteLine($"{nameof(Program)} | {nameof(InstallDirectory)} | Installing directory: {source.Path}");
+
+            FileInfo fileInfo = GetFileInfo(source.Path);
+            if (fileInfo == null)
+                throw new Exception($"{nameof(Program)} | {nameof(InstallDirectory)} | ERROR: Source is not a valid path: {source.Path}");
+            if (!fileInfo.Attributes.HasFlag(FileAttributes.Directory))
+                throw new Exception($"{nameof(Program)} | {nameof(InstallDirectory)} | ERROR: Source is not a directory: {source.Path}");
+            
+            
+            // create target directory
+            fileSystem.CreateDirectory(source.Target, 0);
+
+            // create directory structure first
+            string[] directories = Directory.GetDirectories(source.Path, "*", SearchOption.AllDirectories);
+            foreach (string dir in directories) {
+                // extract relative path from root to destination
+                var relativePath = dir.Substring(source.Path.Length + 1).Replace('\\', '/');
+                var dirToCreate = dir.Split(Path.DirectorySeparatorChar).Last();
+                var targetPath = source.Target + relativePath;
+
+                Console.WriteLine($"{nameof(Program)} | {nameof(InstallDirectory)} | Creating: " + targetPath + "  (" + dirToCreate + ")");
+                if (!fileSystem.CreateDirectory(targetPath, 0)) {
+                    Console.WriteLine($"{nameof(Program)} | {nameof(InstallDirectory)} | ERROR: Failed to create directory: " + dirToCreate);
+                    return;
+                }
+            }
+
+            // Iterate through deployment folder and install system files
+            string[] installationFiles = Directory.GetFiles(source.Path, "*", SearchOption.AllDirectories);
+            foreach (string file in installationFiles) {
+                var relativePath = file.Substring(source.Path.Length + 1).Replace('\\', '/');
+                var targetPath = source.Target + relativePath;
+                
+                Console.WriteLine($"{nameof(Program)} | {nameof(InstallDirectory)} | Installing: " + targetPath);
+                if (!fileSystem.CreateFile(targetPath, 0, File.ReadAllBytes(file))) {
+                    throw new Exception($"{nameof(Program)} | {nameof(InstallDirectory)} | ERROR: Failed to install file: {file}");
+                }
+            }
+        }
+
+        static string GetCurrentPlatform()
+        {
+            if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+                return "windows";
+            else if (Environment.OSVersion.Platform == PlatformID.Unix)
+                return "linux";
+            else
+                return "osx";
+        }
+
+        static string GetCurrentArchitecture()
+        {
+            PortableExecutableKinds peKind;
+            ImageFileMachine machine;
+            typeof(object).Module.GetPEKind(out peKind, out machine);
+            switch (machine)
+            {
+                case ImageFileMachine.I386:
+                    return Environment.Is64BitOperatingSystem ? "x64" : "x86";
+                case ImageFileMachine.AMD64:
+                    return "x64";
+                case ImageFileMachine.ARM:
+                    return Environment.Is64BitOperatingSystem ? "arm64" : "arm";
+                case ImageFileMachine.IA64:
+                    return "x64";
+                default:
+                    throw new Exception($"{nameof(Program)} | {nameof(InstallChefPackage)} | ERROR: Could not determine current architecture");
+            }
+        }
+
+        static string GetPackageInstallPath(ProjectSource source)
+        {
+            // is a full path already provided?
+            if (Path.HasExtension(source.Target))
+                return source.Target;
+            return Path.Combine(source.Target, source.Package + ".pack");
+        }
+
+        static async void InstallChefPackage(FileSystems.IFileSystem fileSystem, ProjectSource source)
+        {
+            if (string.IsNullOrEmpty(source.Package))
+                throw new Exception($"{nameof(Program)} | {nameof(InstallChefPackage)} | ERROR: Package name is not provided");
+            
+            var channel = string.IsNullOrEmpty(source.Channel) ? "stable" : source.Channel;
+            var platform = string.IsNullOrEmpty(source.Platform) ? GetCurrentPlatform() : source.Platform;
+            var arch = string.IsNullOrEmpty(source.Arch) ? GetCurrentArchitecture() : source.Arch;
+            var temporaryFilePath = Path.GetTempFileName();
+
+            Console.Write($"{nameof(Program)} | {nameof(InstallChefPackage)} | Downloading {source.Package}... ");
+            await Integrations.ChefClient.DownloadPack(temporaryFilePath, source.Package, platform, arch, channel);
+
+            // now install the file onto the disk, set the source to the file downloaded
+            // and set target to the target path
+            source.Path = temporaryFilePath;
+            source.Target = GetPackageInstallPath(source);
+
+            Console.WriteLine($"{nameof(Program)} | {nameof(InstallChefPackage)} | Installing: {source.Package}");
+            InstallFile(fileSystem, source);
+
+            // cleanup
+            File.Delete(temporaryFilePath);
+        }
+
         static void InstallSource(FileSystems.IFileSystem fileSystem, ProjectSource source)
         {
             if (fileSystem == null)
                 return;
-
-            FileInfo fileInfo = GetFileInfo(source.Path);
-            if (fileInfo == null)
-                return;
-
+            
             // strip leading path
             if (source.Target.StartsWith("/"))
                 source.Target = source.Target.Substring(1);
 
-            if (fileInfo.Attributes.HasFlag(FileAttributes.Directory))
+            switch (source.Type.ToLower())
             {
-                Console.WriteLine($"Installing directory: {source.Path}");
-                
-                // create target directory
-                fileSystem.CreateDirectory(source.Target, 0);
-
-                // create directory structure first
-                string[] directories = Directory.GetDirectories(source.Path, "*", SearchOption.AllDirectories);
-                foreach (string dir in directories) {
-                    // extract relative path from root to destination
-                    var relativePath = dir.Substring(source.Path.Length + 1).Replace('\\', '/');
-                    var dirToCreate = dir.Split(Path.DirectorySeparatorChar).Last();
-                    var targetPath = source.Target + relativePath;
-
-                    Console.WriteLine("Creating: " + targetPath + "  (" + dirToCreate + ")");
-                    if (!fileSystem.CreateDirectory(targetPath, 0)) {
-                        Console.WriteLine("Failed to create directory: " + dirToCreate);
-                        return;
-                    }
-                }
-
-                // Iterate through deployment folder and install system files
-                string[] installationFiles = Directory.GetFiles(source.Path, "*", SearchOption.AllDirectories);
-                foreach (string file in installationFiles) {
-                    var relativePath = file.Substring(source.Path.Length + 1).Replace('\\', '/');
-                    var targetPath = source.Target + relativePath;
-                    
-                    Console.WriteLine("Copying: " + targetPath);
-                    if (!fileSystem.CreateFile(targetPath, 0, File.ReadAllBytes(file))) {
-                        Console.WriteLine("Failed to install file: " + targetPath);
-                        return;
-                    }
-                }
-            }
-            else
-            {
-                Console.WriteLine($"Installing file: {source.Path} => {source.Target}");
-                var data = GetFileData(source.Path);
-                if (data == null)
-                {
-                    Console.WriteLine($"Failed to read file: {source.Path}");
-                    return;
-                }
-                
-                var rootPath = Path.GetDirectoryName(source.Target);
-                if (!string.IsNullOrEmpty(rootPath))
-                {
-                    if (!fileSystem.CreateDirectory(rootPath, 0))
-                    {
-                        Console.WriteLine("Failed to create directory: " + rootPath);
-                        return;
-                    }
-                }
-
-                if (!fileSystem.CreateFile(source.Target, 0, data))
-                    Console.WriteLine($"Failed to write file: {source.Target}");
+                case "file":
+                    InstallFile(fileSystem, source);
+                    break;
+                case "dir":
+                    InstallDirectory(fileSystem, source);
+                    break;
+                case "chef":
+                    InstallChefPackage(fileSystem, source);
+                    break;
+                default:
+                    throw new Exception($"{nameof(Program)} | {nameof(InstallSource)} | ERROR: Unknown source type: {source.Type}");
             }
         }
 
@@ -312,7 +395,7 @@ namespace OSBuilder
 
             // Assert that vbr image is specified in case of boot
             if (attributes.HasFlag(FileSystems.FileSystemAttributes.Boot) && string.IsNullOrEmpty(partition.VbrImage))
-                throw new Exception($"{partition.Label}: No VBR image specified for boot partition");
+                throw new Exception($"{nameof(Program)} | {nameof(CreateDiskScheme)} | {partition.Label} | ERROR: No VBR image specified for boot partition");
             
             // If no guid is provided we would like to generate one
             if (!string.IsNullOrEmpty(partition.Guid))
@@ -344,11 +427,11 @@ namespace OSBuilder
             else if (config.Scheme.ToLower() == "gpt")
                 scheme = new DiskLayouts.GPT();
             else {
-                throw new Exception("Invalid schema specified in the model");
+                throw new Exception($"{nameof(Program)} | {nameof(CreateDiskScheme)} | ERROR: Invalid schema specified in the model");
             }
             
             if (!scheme.Create(disk))
-                throw new Exception("Failed to create disk scheme");
+                throw new Exception($"{nameof(Program)} | {nameof(CreateDiskScheme)} | ERROR: Failed to create disk scheme");
             return scheme;
         }
 
@@ -358,10 +441,10 @@ namespace OSBuilder
             
             ulong diskSizeInMBytes = GetMByteCountFromString(config.Size);
             ulong diskSectorCount = GetSectorCountFromMB(512, diskSizeInMBytes);
-            Console.WriteLine("size of disk: " + diskSizeInMBytes.ToString() + "mb");
-            Console.WriteLine("sector count: " + diskSectorCount.ToString());
+            Console.WriteLine($"{nameof(Program)} | {nameof(SilentInstall)} | Disk will be sized at " + diskSizeInMBytes.ToString() + "mb");
+            Console.WriteLine($"{nameof(Program)} | {nameof(SilentInstall)} | Disk sector count " + diskSectorCount.ToString());
             if (diskSizeInMBytes < 64)
-                throw new Exception("Disk size must be at least 64mb");
+                throw new Exception($"{nameof(Program)} | {nameof(SilentInstall)} | ERROR: Disk size must be at least 64mb");
 
             // Which kind of target?
             if (installationType.ToLower() == "live" && drives.Count > 0)
@@ -370,17 +453,13 @@ namespace OSBuilder
                 disk = new VmdkDisk(512, diskSectorCount);
             else if (installationType.ToLower() == "img")
                 disk = new ImgDisk(512, diskSectorCount);
-            else {
-                Console.WriteLine("Invalid option for -target");
-                return -1;
-            }
+            else
+                throw new Exception($"{nameof(Program)} | {nameof(SilentInstall)} | ERROR: Invalid option for -target");
 
 
             // Create the disk
-            if (!disk.Create()) {
-                Console.WriteLine("Failed to create disk");
-                return -1;
-            }
+            if (!disk.Create())
+                throw new Exception($"{nameof(Program)} | {nameof(SilentInstall)} | ERROR: Failed to create disk");
 
             using (var diskScheme = CreateDiskScheme(disk, config))
             {
@@ -388,14 +467,14 @@ namespace OSBuilder
                 {
                     var fileSystem = CreateFileSystem(partition);
                     if (diskScheme.GetFreeSectorCount() == 0)
-                        throw new Exception($"No free sectors left for partition {partition.Label}");
+                        throw new Exception($"{nameof(Program)} | {nameof(SilentInstall)} | ERROR: No free sectors left for partition {partition.Label}");
 
                     if (!string.IsNullOrEmpty(partition.Size))
                     {
                         var partitionSizeMb = GetMByteCountFromString(partition.Size);
                         var partitionSizeSectors = GetSectorCountFromMB((int)disk.Geometry.BytesPerSector, partitionSizeMb);
                         if (diskScheme.GetFreeSectorCount() < partitionSizeSectors)
-                            throw new Exception($"Not enough free space for partition {partition.Label}");
+                            throw new Exception($"{nameof(Program)} | {nameof(SilentInstall)} | ERROR: Not enough free space for partition {partition.Label}");
 
                         diskScheme.AddPartition(fileSystem, partitionSizeSectors, partition.VbrImage, partition.ReservedSectorsImage);
                     }
@@ -425,27 +504,25 @@ namespace OSBuilder
 
             // Debug print header
             Console.WriteLine("Disk Utility Software");
-            Console.WriteLine(" - Tool for creating and reading disk images.\n");
+            Console.WriteLine(" - Tool for creating and reading disk images.");
+            Console.WriteLine("Usage: osbuilder <projectfile> [options]");
 
             // Parse arguments
             if (args != null && args.Length > 0) {
                 for (int i = 0; i < args.Length; i++) {
-                    switch (args[i].ToLower()) {
-                        case "--project": {
-                                if (i + 1 < args.Length)
-                                    projectFile = args[i + 1];
-                                else
-                                    Console.WriteLine("Missing argument for --project");
-                                i++;
-                            } break;
-
-                        case "--target": {
-                                if (i + 1 < args.Length)
-                                    installationType = args[i + 1];
-                                else
-                                    Console.WriteLine("Missing argument for --target");
-                                i++;
-                            } break;
+                    if (args[i].ToLower() == "--target")
+                    {
+                        if (i + 1 < args.Length)
+                            installationType = args[++i];
+                        else
+                            throw new ArgumentException($"{nameof(Program)} | {nameof(Main)} | ERROR: Missing argument for --target");
+                    }
+                    else
+                    {
+                        if (string.IsNullOrEmpty(projectFile))
+                            projectFile = args[i];
+                        else
+                            throw new ArgumentException($"{nameof(Program)} | {nameof(Main)} | ERROR: Only one project file can be specified");
                     }
                 }
             }

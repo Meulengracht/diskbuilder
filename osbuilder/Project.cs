@@ -7,10 +7,21 @@ namespace OSBuilder
 {
     public class ProjectSource
     {
+        // Supported types are
+        // Directory (Path, Target)
+        // File (Path, Target)
+        // Chef (Package, Channel, Platform, Arch, Target)
         public string Type { get; set; }
+
+        // Shared properties
         public string Path { get; set; }
         public string Target { get; set; }
-        public List<string> Attributes { get; set; }
+
+        // Chef specific properties
+        public string Package { get; set; }
+        public string Channel { get; set; }
+        public string Platform { get; set; }
+        public string Arch { get; set; }
     }
 
     public class ProjectPartition

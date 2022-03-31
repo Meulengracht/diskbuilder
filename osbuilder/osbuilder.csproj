@@ -6,6 +6,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.11.0" />
+    <PackageReference Include="Azure.Storage.Common" Version="12.10.0" />
     <PackageReference Include="DiscUtils" Version="0.16.13" />
     <PackageReference Include="YamlDotNet" Version="11.2.1" />
   </ItemGroup>
