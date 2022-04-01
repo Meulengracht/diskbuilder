@@ -9,6 +9,9 @@ description: |
 base: core18
 grade: stable
 confinement: strict
+architectures:
+  - build-on: [amd64]
+    run-on: [amd64]
 
 apps:
   osbuilder:

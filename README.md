@@ -1,7 +1,13 @@
 # diskbuilder
 
-A utility tool to build disk images for virtual machines. Configurable by YAML and easily extended. It uses the DiscUtils and is
+A utility tool to build disk images for virtual machines. Configurable by YAML and easily extended. It uses the DiscUtils library and is
 written in .Net Core 3.1.
+
+Originally developed for the Vali/MollenOS operating system, this is a generic virtual machine image builder. It supports configuration in yaml, and supports installing sources into the VM image as a part of the build process. It also supports installing bootloaders (stage1 and stage2) onto the partitions.
+
+[![Get it from the Snap Store](https://snapcraft.io/static/images/badges/en/snap-store-black.svg)](https://snapcraft.io/diskbuilder)
+
+## Features
 
 Supported disk image types
 - img
