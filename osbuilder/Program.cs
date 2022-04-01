@@ -463,6 +463,7 @@ namespace OSBuilder
 
             using (var diskScheme = CreateDiskScheme(disk, config))
             {
+                int i = 0;
                 foreach (var partition in config.Partitions)
                 {
                     var fileSystem = CreateFileSystem(partition);
@@ -473,7 +474,9 @@ namespace OSBuilder
                     {
                         var partitionSizeMb = GetMByteCountFromString(partition.Size);
                         var partitionSizeSectors = GetSectorCountFromMB((int)disk.Geometry.BytesPerSector, partitionSizeMb);
-                        if (diskScheme.GetFreeSectorCount() < partitionSizeSectors)
+
+                        // Unless we are on the last partition, we need to make sure there is room for the partition
+                        if (diskScheme.GetFreeSectorCount() < partitionSizeSectors && i != config.Partitions.Count - 1)
                             throw new Exception($"{nameof(Program)} | {nameof(SilentInstall)} | ERROR: Not enough free space for partition {partition.Label}");
 
                         diskScheme.AddPartition(fileSystem, partitionSizeSectors, partition.VbrImage, partition.ReservedSectorsImage);
@@ -488,6 +491,7 @@ namespace OSBuilder
                             InstallSource(fileSystem, source);
                         }
                     }
+                    i++;
                 }
             }
             disk.Close();
