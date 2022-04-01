@@ -1,0 +1,22 @@
+name: diskbuilder
+version: '1.0'
+summary: A diskutility build tool for building vm images
+description: |
+  Originally developed for the Vali/MollenOS operating system, this is a generic virtual machine image builder.
+  It supports configuration in yaml, and supports installing sources into the VM image as a part of the build process.
+  It also supports installing bootloaders (stage1 and stage2) onto the partitions.
+
+base: core18
+grade: stable
+confinement: strict
+
+apps:
+  osbuilder:
+    command: osbuilder
+
+parts:
+  osbuilder-src:
+    source: osbuilder
+    plugin: dotnet
+    dotnet-version: 3.1
+    dotnet-runtime-version: 3.1.0
