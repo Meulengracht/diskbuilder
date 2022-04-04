@@ -39,7 +39,7 @@ namespace OSBuilder.FileSystems.FAT
 
             // Modify boot-sector by preserving the header, size 79 (B-5A)
             byte[] existingSectorContent = _disk.Read(_sector, 1);
-            Buffer.BlockCopy(existingSectorContent, 11, bootsector, 11, 79);
+            Buffer.BlockCopy(existingSectorContent, 11, bootsector, 11, 78);
 
             // Flush the modified sector back to disk
             Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Writing stage1 bootloader");
