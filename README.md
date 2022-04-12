@@ -41,6 +41,13 @@ You should end up with the executable in build folder.
 
 ## Usage
 
+When installing from snap you might need to connect two additional plugs to get Dotnet Core 3.1 to work.
+
+```
+snap connect diskbuilder:process-control
+snap connect diskbuilder:mount-observe
+```
+
 You can now create disk images by executing the following command
 
 ```

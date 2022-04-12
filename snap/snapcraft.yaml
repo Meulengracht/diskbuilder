@@ -16,6 +16,9 @@ architectures:
 apps:
   osbuilder:
     command: osbuilder
+    plugs:
+      - process-control
+      - mount-observe
 
 parts:
   osbuilder-src:
@@ -23,6 +26,3 @@ parts:
     plugin: dotnet
     dotnet-version: 3.1
     dotnet-runtime-version: 3.1.0
-    plugs:
-      - process-control
-      - mount-observe
