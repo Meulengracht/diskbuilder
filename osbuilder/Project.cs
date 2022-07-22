@@ -22,6 +22,7 @@ namespace OSBuilder
         public string Channel { get; set; }
         public string Platform { get; set; }
         public string Arch { get; set; }
+        public bool Required { get; set; }
     }
 
     public class ProjectPartition

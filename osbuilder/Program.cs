@@ -155,7 +155,20 @@ namespace OSBuilder
             var temporaryFilePath = Path.GetTempFileName();
 
             Console.Write($"{nameof(Program)} | {nameof(InstallChefPackage)} | Downloading {source.Package}... ");
-            await Integrations.ChefClient.DownloadPack(temporaryFilePath, source.Package, platform, arch, channel);
+            try
+            {
+                await Integrations.ChefClient.DownloadPack(temporaryFilePath, source.Package, platform, arch, channel);
+            }
+            catch (Exception)
+            {
+                if (source.Required)
+                    throw new Exception($"{nameof(Program)} | {nameof(InstallChefPackage)} | ERROR: Failed to download {source.Package}");
+                else
+                {
+                    Console.WriteLine($"ERROR: Failed to download {source.Package}, skipping");
+                    return;
+                }
+            }
 
             // now install the file onto the disk, set the source to the file downloaded
             // and set target to the target path
