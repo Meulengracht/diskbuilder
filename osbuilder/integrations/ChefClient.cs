@@ -67,6 +67,9 @@ namespace OSBuilder.Integrations
             
             // get the download instructions and deserialize from json
             var response = await httpClient.GetAsync(downloadUrl);
+            if (!response.IsSuccessStatusCode)
+                throw new Exception($"{nameof(ChefClient)} | {nameof(DownloadPack)} | ERROR: Failed to find chef package");
+            
             var body = await response.Content.ReadAsStringAsync();
             var downloadResponse = JsonSerializer.Deserialize<ChefDownloadResponse>(body);
             if (downloadResponse == null)

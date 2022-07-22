@@ -25,6 +25,8 @@ namespace OSBuilder.FileSystems.MFS
         //uint8_t Integrated[512];	// 0x200
 
         private static readonly uint MFS_ENDOFCHAIN = 0xFFFFFFFF;
+        private static readonly int  MFS_RECORDSIZE = 1024;
+        private static readonly uint MFS_EXPANDSIZE = 8;
 
         private static readonly uint KILOBYTE = 1024;
         private static readonly uint MEGABYTE = (KILOBYTE * 1024);
@@ -55,11 +57,8 @@ namespace OSBuilder.FileSystems.MFS
             return Checksum;
         }
 
-        /* FillBucketChain
-         * Fill's the given bucket chain with the given data */
-        void FillBucketChain(UInt32 Bucket, UInt32 BucketLength, Byte[] Data)
+        void FillBucketChain(uint Bucket, uint BucketLength, byte[] Data)
         {
-            // Variables
             UInt32 BucketLengthItr = BucketLength;
             UInt32 BucketPtr = Bucket;
             Int64 Index = 0;
@@ -95,494 +94,357 @@ namespace OSBuilder.FileSystems.MFS
             }
         }
 
-        /* CreateFileRecord
-         * Creates a new file-record with the given flags and data, and name at in the given directory start bucket. 
-         * Name must not be a path. */
-        void CreateFileRecord(String Name, RecordFlags Flags, UInt32 Bucket, UInt32 BucketLength, Byte[] Data, UInt32 DirectoryBucket)
+        private void SaveNextAvailableBucket()
         {
-            uint currentDirectoryBucket = DirectoryBucket;
-            uint currentBucketLength = 0;
-            int End = 0;
+            byte[] bootsector = _disk.Read(_sector, 1);
 
-            // Iterate through directory and find a free record
-            while (End == 0) {
-                // Get length of bucket
-                _bucketMap.GetBucketLengthAndLink(currentDirectoryBucket, out currentBucketLength);
+            // Get relevant locations
+            ulong MasterRecordSector = BitConverter.ToUInt64(bootsector, 28);
+            ulong MasterRecordMirrorSector = BitConverter.ToUInt64(bootsector, 36);
+            
+            // Update the master-record to reflect the new index
+            byte[] masterRecord = _disk.Read(_sector + MasterRecordSector, 1);
+            masterRecord[76] = (Byte)(_bucketMap.NextFreeBucket & 0xFF);
+            masterRecord[77] = (Byte)((_bucketMap.NextFreeBucket >> 8) & 0xFF);
+            masterRecord[78] = (Byte)((_bucketMap.NextFreeBucket >> 16) & 0xFF);
+            masterRecord[79] = (Byte)((_bucketMap.NextFreeBucket >> 24) & 0xFF);
+            _disk.Write(masterRecord, _sector + MasterRecordSector, true);
+            _disk.Write(masterRecord, _sector + MasterRecordMirrorSector, true);
+        }
 
-                // Calculate which bucket to read in
-                Byte[] directoryBuffer = _disk.Read(BucketToSector(currentDirectoryBucket), _bucketSize * currentBucketLength);
+        private void EnsureBucketSpace(MfsRecord record, ulong size)
+        {
+            if (size < record.AllocatedSize)
+                return;
 
-                // Iterate the bucket and find a free entry
-                for (int i = 0; i < (_bucketSize * _disk.Geometry.BytesPerSector * currentBucketLength); i += 1024) {
-                    if (directoryBuffer[i] == 0) {
-                        // Variables
-                        ulong NumBuckets = 0;
-                        ulong AllocatedSize = 0;
-                        ulong DataLen = 0;
+            // Calculate only the difference in allocation size
+            ulong sectorCount = (size - record.AllocatedSize) / _disk.Geometry.BytesPerSector;
+            if (((size - record.AllocatedSize) % _disk.Geometry.BytesPerSector) > 0)
+                sectorCount++;
+            uint bucketCount = (uint)(sectorCount / _bucketSize);
+            if ((sectorCount % _bucketSize) > 0)
+                bucketCount++;
 
-                        // Do we even need to write data?
-                        if (Data != null) {
-                            DataLen = (ulong)Data.LongLength;
-                            NumBuckets = (ulong)(Data.LongLength / _disk.Geometry.BytesPerSector) / _bucketSize;
-                            if (((Data.LongLength / _disk.Geometry.BytesPerSector) % _bucketSize) > 0)
-                                NumBuckets++;
-                            AllocatedSize = NumBuckets * _bucketSize * _disk.Geometry.BytesPerSector;
-                        }
+            // Do the allocation
+            Console.WriteLine("  - allocating " + bucketCount.ToString() + " buckets");
 
-                        // Setup flags
-                        uint iFlags = (uint)Flags;
-                        directoryBuffer[i + 0] = (Byte)(iFlags & 0xFF);
-                        directoryBuffer[i + 1] = (Byte)((iFlags >> 8) & 0xFF);
-                        directoryBuffer[i + 2] = (Byte)((iFlags >> 16) & 0xFF);
-                        directoryBuffer[i + 3] = (Byte)((iFlags >> 24) & 0xFF);
+            uint initialBucketSize = 0;
+            uint bucketAllocation = _bucketMap.AllocateBuckets(bucketCount, out initialBucketSize);
+            Console.WriteLine("  - allocated bucket " + bucketAllocation.ToString());
 
-                        // Initialize start buckert and length
-                        directoryBuffer[i + 4] = (Byte)(Bucket & 0xFF);
-                        directoryBuffer[i + 5] = (Byte)((Bucket >> 8) & 0xFF);
-                        directoryBuffer[i + 6] = (Byte)((Bucket >> 16) & 0xFF);
-                        directoryBuffer[i + 7] = (Byte)((Bucket >> 24) & 0xFF);
+            // Iterate to end of data chain, but keep a pointer to the previous
+            uint BucketPtr = record.Bucket;
+            uint bucketPrevPtr = 0;
+            uint BucketLength = 0;
+            while (BucketPtr != MFS_ENDOFCHAIN) {
+                bucketPrevPtr = BucketPtr;
+                BucketPtr = _bucketMap.GetBucketLengthAndLink(BucketPtr, out BucketLength);
+            }
 
-                        directoryBuffer[i + 8] = (Byte)(BucketLength & 0xFF);
-                        directoryBuffer[i + 9] = (Byte)((BucketLength >> 8) & 0xFF);
-                        directoryBuffer[i + 10] = (Byte)((BucketLength >> 16) & 0xFF);
-                        directoryBuffer[i + 11] = (Byte)((BucketLength >> 24) & 0xFF);
+            // Update the last link to the newly allocated
+            _bucketMap.SetNextBucket(bucketPrevPtr, bucketAllocation);
 
-                        // Initialize data checksum
-                        if (Data != null) {
-                            uint Checksum = CalculateChecksum(Data, -1, 0);
-                            directoryBuffer[i + 16] = (Byte)(Checksum & 0xFF);
-                            directoryBuffer[i + 17] = (Byte)((Checksum >> 8) & 0xFF);
-                            directoryBuffer[i + 18] = (Byte)((Checksum >> 16) & 0xFF);
-                            directoryBuffer[i + 19] = (Byte)((Checksum >> 24) & 0xFF);
-                        }
-
-                        // Ignore time
-
-                        // Sizes - 0x30
-                        directoryBuffer[i + 48] = (Byte)(DataLen & 0xFF);
-                        directoryBuffer[i + 49] = (Byte)((DataLen >> 8) & 0xFF);
-                        directoryBuffer[i + 50] = (Byte)((DataLen >> 16) & 0xFF);
-                        directoryBuffer[i + 51] = (Byte)((DataLen >> 24) & 0xFF);
-                        directoryBuffer[i + 52] = (Byte)((DataLen >> 32) & 0xFF);
-                        directoryBuffer[i + 53] = (Byte)((DataLen >> 40) & 0xFF);
-                        directoryBuffer[i + 54] = (Byte)((DataLen >> 48) & 0xFF);
-                        directoryBuffer[i + 55] = (Byte)((DataLen >> 56) & 0xFF);
-
-                        directoryBuffer[i + 56] = (Byte)(AllocatedSize & 0xFF);
-                        directoryBuffer[i + 57] = (Byte)((AllocatedSize >> 8) & 0xFF);
-                        directoryBuffer[i + 58] = (Byte)((AllocatedSize >> 16) & 0xFF);
-                        directoryBuffer[i + 59] = (Byte)((AllocatedSize >> 24) & 0xFF);
-                        directoryBuffer[i + 60] = (Byte)((AllocatedSize >> 32) & 0xFF);
-                        directoryBuffer[i + 61] = (Byte)((AllocatedSize >> 40) & 0xFF);
-                        directoryBuffer[i + 62] = (Byte)((AllocatedSize >> 48) & 0xFF);
-                        directoryBuffer[i + 63] = (Byte)((AllocatedSize >> 56) & 0xFF);
-                        
-                        // SparseMap
-                        directoryBuffer[i + 64] = 0xFF;
-                        directoryBuffer[i + 65] = 0xFF;
-                        directoryBuffer[i + 66] = 0xFF;
-                        directoryBuffer[i + 67] = 0xFF;
-
-                        // Name at 68 + 300
-                        Byte[] NameData = Encoding.UTF8.GetBytes(Name);
-                        for (int j = 0; j < NameData.Length; j++)
-                            directoryBuffer[i + 68 + j] = NameData[j];
-
-                        // Everything else 0
-                        // Write new entry to disk and return
-                        _disk.Write(directoryBuffer, BucketToSector(currentDirectoryBucket), true);
-                        Console.WriteLine(
-                            "  - Writing " + directoryBuffer.Length.ToString() + 
-                            " bytes to disk at sector " + BucketToSector(currentDirectoryBucket).ToString()
-                        );
-                        return;
-                    }
-                }
-
-                // Store previous and get link
-                UInt32 previousBucket = currentDirectoryBucket;
-                if (End == 0) {
-                    currentDirectoryBucket = _bucketMap.GetBucketLengthAndLink(currentDirectoryBucket, out currentBucketLength);
-                }
-
-                // If we reach end of directory we need to expand
-                if (currentDirectoryBucket == MFS_ENDOFCHAIN) {
-                    Console.WriteLine("Directory - Expansion");
-                    byte[] bootsector = _disk.Read(_sector, 1);
-
-                    // Get relevant locations
-                    ulong MasterRecordSector = BitConverter.ToUInt64(bootsector, 28);
-                    ulong MasterRecordMirrorSector = BitConverter.ToUInt64(bootsector, 36);
-                    
-                    // Allocate a bunch of new buckets for expansion
-                    uint allocationLength = 0;
-                    uint allocation = _bucketMap.AllocateBuckets(4, out allocationLength);
-                    _bucketMap.SetNextBucket(previousBucket, allocation);
-
-                    // Update the master-record to reflect the new index
-                    byte[] masterRecord = _disk.Read(_sector + MasterRecordSector, 1);
-                    masterRecord[76] = (Byte)(_bucketMap.NextFreeBucket & 0xFF);
-                    masterRecord[77] = (Byte)((_bucketMap.NextFreeBucket >> 8) & 0xFF);
-                    masterRecord[78] = (Byte)((_bucketMap.NextFreeBucket >> 16) & 0xFF);
-                    masterRecord[79] = (Byte)((_bucketMap.NextFreeBucket >> 24) & 0xFF);
-                    _disk.Write(masterRecord, _sector + MasterRecordSector, true);
-                    _disk.Write(masterRecord, _sector + MasterRecordMirrorSector, true);
-
-                    // Wipe the new allocated directory block
-                    Console.WriteLine("Directory - Wipe");
-                    Byte[] Wipe = new Byte[_bucketSize * _disk.Geometry.BytesPerSector * allocationLength];
-                    _disk.Write(Wipe, BucketToSector(allocation), true);
-
-                    // Update iterator
-                    currentDirectoryBucket = allocation;
-                }
+            // Update the allocated size in cached
+            record.AllocatedSize += (bucketCount * _bucketSize * _disk.Geometry.BytesPerSector);
+            if (record.Bucket == MFS_ENDOFCHAIN)
+            {
+                record.Bucket = bucketAllocation;
+                record.BucketLength = bucketCount;
             }
         }
 
-        /* ListRecursive 
-         * Has two purposes - either it recursively lists the entries of end directory or it
-         * can locate a file if the path contains '.' and return it's placement */
-        MfsRecord ListRecursive(UInt32 DirectoryBucket, String LocalPath, Boolean Verbose = true)
+        static private string SafePath(string path)
         {
-            // Sanitize path, if it starts with / skip it
-            String mPath = LocalPath;
-            if (mPath.StartsWith("/"))
-                mPath = mPath.Substring(1, mPath.Length - 1);
+            return path.Replace('\\', '/').Trim('/');
+        }
 
-            // Extract the next token we are looking for
-            int iDex = mPath.IndexOf("/");
-            String LookFor = mPath.Substring(0, iDex == -1 ? mPath.Length : iDex);
+        static private bool IsRecordInUse(MfsRecord record)
+        {
+            return record.Flags.HasFlag(RecordFlags.InUse);
+        }
 
-            // Detect end of path
-            if (String.IsNullOrEmpty(LookFor) || LookFor.Contains(".")) {
-                UInt32 IteratorBucket = DirectoryBucket;
-                UInt32 DirectoryLength = 0;
-                int End = 0;
+        static private int GetRecordNameLength(byte[] buffer, int offset)
+        {
+            int length = 0;
+            while (buffer[offset + 68 + length] != 0)
+                length++;
+            return length;
+        }
 
-                while (End == 0) {
-                    // Get length of bucket
-                    _bucketMap.GetBucketLengthAndLink(IteratorBucket, out DirectoryLength);
+        static private string GetRecordName(byte[] buffer, int offset)
+        {
+            int length = GetRecordNameLength(buffer, offset);
+            return Encoding.UTF8.GetString(buffer, offset + 68, length);
+        }
 
-                    // Calculate the bucket we should load
-                    Byte[] directoryBuffer = _disk.Read(BucketToSector(IteratorBucket), _bucketSize * DirectoryLength);
+        static private MfsRecord ParseRecord(byte[] buffer, int offset, uint directoryBucket, uint directoryBucketLength)
+        {
+            MfsRecord record = new MfsRecord();
+            record.Name = GetRecordName(buffer, offset);
+            record.Flags = (RecordFlags)BitConverter.ToUInt32(buffer, offset);
+            record.Size = BitConverter.ToUInt64(buffer, offset + 48);
+            record.AllocatedSize = BitConverter.ToUInt64(buffer, offset + 56);
+            record.Bucket = BitConverter.ToUInt32(buffer, offset + 4);
+            record.BucketLength = BitConverter.ToUInt32(buffer, offset + 8);
 
-                    // Iterate the number of records
-                    for (int i = 0; i < (_bucketSize * _disk.Geometry.BytesPerSector * DirectoryLength); i += 1024) {
-                        if (directoryBuffer[i] == 0) {
-                            continue;
-                        }
+            record.DirectoryBucket = directoryBucket;
+            record.DirectoryLength = directoryBucketLength;
+            record.DirectoryIndex = (uint)(offset / MFS_RECORDSIZE);
+            return record;
+        }
 
-                        // Do some name matching to see if we have found token
-                        int Len = 0;
-                        while (directoryBuffer[i + 68 + Len] != 0)
-                            Len++;
-                        String Name = Encoding.UTF8.GetString(directoryBuffer, i + 68, Len);
-                        RecordFlags Flags = (RecordFlags)BitConverter.ToUInt32(directoryBuffer, i);
+        static private void WriteRecord(byte[] buffer, int offset, MfsRecord record)
+        {
+            byte[] name = Encoding.UTF8.GetBytes(record.Name);
+            Array.Copy(name, 0, buffer, offset + 68, name.Length);
+            Array.Copy(BitConverter.GetBytes((uint)record.Flags), 0, buffer, offset, 4);
+            Array.Copy(BitConverter.GetBytes(record.Size), 0, buffer, offset + 48, 8);
+            Array.Copy(BitConverter.GetBytes(record.AllocatedSize), 0, buffer, offset + 56, 8);
+            Array.Copy(BitConverter.GetBytes(record.Bucket), 0, buffer, offset + 4, 4);
+            Array.Copy(BitConverter.GetBytes(record.BucketLength), 0, buffer, offset + 8, 4);
+        }
 
-                        // Have we found the record we were looking for?
-                        if (LookFor.Contains(".")
-                            && Name.ToLower() == LookFor.ToLower()) {
-                            MfsRecord nEntry = new MfsRecord();
-                            nEntry.Name = Name;
-                            nEntry.Size = BitConverter.ToUInt64(directoryBuffer, i + 48);
-                            nEntry.AllocatedSize = BitConverter.ToUInt64(directoryBuffer, i + 56);
-                            nEntry.Bucket = BitConverter.ToUInt32(directoryBuffer, i + 4);
-                            nEntry.BucketLength = BitConverter.ToUInt32(directoryBuffer, i + 8);
+        private MfsRecord FindRecord(uint directoryBucket, string recordName)
+        {
+            uint bucketLength = 0;
+            uint currentBucket = directoryBucket;
+            while (true)
+            {
+                uint bucketLink = _bucketMap.GetBucketLengthAndLink(currentBucket, out bucketLength);
+                var  bucketBuffer = _disk.Read(BucketToSector(currentBucket), _bucketSize * bucketLength);
+                
+                var bytesToIterate = _bucketSize * _disk.Geometry.BytesPerSector * bucketLength;
+                for (int i = 0; i < bytesToIterate; i += MFS_RECORDSIZE)
+                {
+                    var record = ParseRecord(bucketBuffer, i, currentBucket, bucketLength);
+                    if (!IsRecordInUse(record))
+                        continue;
 
-                            nEntry.DirectoryBucket = IteratorBucket;
-                            nEntry.DirectoryLength = DirectoryLength;
-                            nEntry.DirectoryIndex = (uint)i;
-
-                            // Done - we found the record
-                            return nEntry;
-                        }
-                        else {
-                            if (Flags.HasFlag(RecordFlags.Directory)) {
-                                if (Verbose) {
-                                    Console.WriteLine("Dir: " + Name);
-                                }
-                            }
-                            else {
-                                if (Verbose) {
-                                    Console.WriteLine("File: " + Name + " (" + BitConverter.ToUInt64(directoryBuffer, i + 48).ToString() + " Bytes)");
-                                }
-                            }
-                            
-                        }
-                    }
-
-                    // Get next bucket link
-                    if (End == 0) {
-                        IteratorBucket = _bucketMap.GetBucketLengthAndLink(IteratorBucket, out DirectoryLength);
-                    }
-                    
-                    // Have we reached end?
-                    if (IteratorBucket == MFS_ENDOFCHAIN) {
-                        End = 1;
-                        break;
-                    }
+                    if (record.Name == recordName)
+                        return record;
                 }
 
-                // Success
-                return null;
-            }
-            else {
-                // Variables
-                UInt32 IteratorBucket = DirectoryBucket;
-                UInt32 DirectoryLength = 0;
-                int End = 0;
-
-                while (End == 0) {
-                    // Get length of bucket
-                    _bucketMap.GetBucketLengthAndLink(IteratorBucket, out DirectoryLength);
-
-                    // Calculate the bucket we should load
-                    Byte[] directoryBuffer = _disk.Read(BucketToSector(IteratorBucket), _bucketSize * DirectoryLength);
-
-                    // Iterate the number of records
-                    for (int i = 0; i < (_bucketSize * _disk.Geometry.BytesPerSector * DirectoryLength); i += 1024) {
-                        if (directoryBuffer[i] == 0) {
-                            continue;
-                        }
-
-                        // Do some name matching to see if we have found token
-                        int Len = 0;
-                        while (directoryBuffer[i + 68 + Len] != 0)
-                            Len++;
-                        String Name = Encoding.UTF8.GetString(directoryBuffer, i + 68, Len);
-                        RecordFlags Flags = (RecordFlags)BitConverter.ToUInt32(directoryBuffer, i);
-
-                        // Have we found the record we were looking for?
-                        // This entry must be a directory
-                        if (Name.ToLower() == LookFor.ToLower()) {
-                            if (!Flags.HasFlag(RecordFlags.Directory)) {
-                                Console.WriteLine(LookFor + " is not a directory");
-                                return null;
-                            }
-
-                            // Create a new record
-                            MfsRecord nEntry = new MfsRecord();
-                            nEntry.Name = Name;
-                            nEntry.Size = BitConverter.ToUInt64(directoryBuffer, i + 48);
-                            nEntry.AllocatedSize = BitConverter.ToUInt64(directoryBuffer, i + 56);
-                            nEntry.Bucket = BitConverter.ToUInt32(directoryBuffer, i + 4);
-                            nEntry.BucketLength = BitConverter.ToUInt32(directoryBuffer, i + 8);
-
-                            nEntry.DirectoryBucket = IteratorBucket;
-                            nEntry.DirectoryLength = DirectoryLength;
-                            nEntry.DirectoryIndex = (uint)i;
-
-                            // Sanitize - directory must have data allocated
-                            if (nEntry.Bucket == MFS_ENDOFCHAIN) {
-                                return null;
-                            }
-                            
-                            // Go further down the rabbit-hole
-                            return ListRecursive(nEntry.Bucket, mPath.Substring(LookFor.Length), Verbose);
-                        }
-                    }
-
-                    // Get next bucket link
-                    if (End == 0) {
-                        IteratorBucket = _bucketMap.GetBucketLengthAndLink(IteratorBucket, out DirectoryLength);
-                    }
-                    
-                    // Have we reached end?
-                    if (IteratorBucket == MFS_ENDOFCHAIN) {
-                        End = 1;
-                        break;
-                    }
-                }
+                if (bucketLink == MFS_ENDOFCHAIN)
+                    break;
+                currentBucket = bucketLink;
             }
             return null;
         }
 
-        /* CreateRecursive 
-         * Recursively iterates through the path and creates the path. 
-         * If path exists nothing happens */
-        MfsRecord CreateRecursive(uint DirectoryBucket, string LocalPath)
+        private void InitiateDirectoryRecord(MfsRecord record)
         {
-            /* Sanity, if start with "/" skip */
-            String mPath = LocalPath;
-            if (mPath.StartsWith("/"))
-                mPath = mPath.Substring(1, mPath.Length - 1);
-            if (mPath.EndsWith("/"))
-                mPath = mPath.Substring(0, mPath.Length - 1);
+            uint initialBucketSize = 0;
+            uint bucket = _bucketMap.AllocateBuckets(MFS_EXPANDSIZE, out initialBucketSize);
 
-            // Get token
-            int iDex = mPath.IndexOf("/");
-            String LookFor = mPath.Substring(0, iDex == -1 ? mPath.Length : iDex);
+            // Wipe the new bucket to zeros
+            byte[] wipeBuffer = new byte[_bucketSize * _disk.Geometry.BytesPerSector * initialBucketSize];
+            _disk.Write(wipeBuffer, BucketToSector(bucket), true);
 
-            // Handle end of path
-            if (String.IsNullOrEmpty(LookFor) || iDex == -1) {
-                // Variables
-                UInt32 IteratorBucket = DirectoryBucket, PreviousBucket = MFS_ENDOFCHAIN;
-                UInt32 DirectoryLength = 0;
-                int End = 0;
-                int i = 0;
+            record.Bucket = bucket;
+            record.BucketLength = initialBucketSize;
+        }
 
-                while (End == 0) {
-                    // Get length of bucket
-                    _bucketMap.GetBucketLengthAndLink(IteratorBucket, out DirectoryLength);
+        private uint ExpandDirectory(uint lastBucket)
+        {
+            uint initialBucketSize = 0;
+            uint bucket = _bucketMap.AllocateBuckets(MFS_EXPANDSIZE, out initialBucketSize);
+            _bucketMap.SetNextBucket(lastBucket, bucket);
+            
+            // Wipe the new bucket to zeros
+            byte[] wipeBuffer = new byte[_bucketSize * _disk.Geometry.BytesPerSector * initialBucketSize];
+            _disk.Write(wipeBuffer, BucketToSector(bucket), true);
+            return bucket;
+        }
 
-                    // Calculate the bucket we should load
-                    Byte[] directoryBuffer = _disk.Read(BucketToSector(IteratorBucket), _bucketSize * DirectoryLength);
+        private void UpdateRecord(MfsRecord record)
+        {
+            var bucketBuffer = _disk.Read(BucketToSector(record.DirectoryBucket), _bucketSize * record.BucketLength);
+            var offset = record.DirectoryIndex * MFS_RECORDSIZE;
+            WriteRecord(bucketBuffer, (int)offset, record);
+            _disk.Write(bucketBuffer, BucketToSector(record.DirectoryBucket), true);
+        }
 
-                    // Iterate the number of records
-                    for (i = 0; i < (_bucketSize * _disk.Geometry.BytesPerSector * DirectoryLength); i += 1024) {
-                        if (directoryBuffer[i] == 0) {
-                            End = 1;
-                            break;
-                        }
+        private MfsRecord CreateRecord(uint directoryBucket, string recordName, RecordFlags flags)
+        {
+            uint bucketLength = 0;
+            uint currentBucket = directoryBucket;
+            while (true)
+            {
+                uint bucketLink = _bucketMap.GetBucketLengthAndLink(currentBucket, out bucketLength);
+                var  bucketBuffer = _disk.Read(BucketToSector(currentBucket), _bucketSize * bucketLength);
+                
+                var bytesToIterate = _bucketSize * _disk.Geometry.BytesPerSector * bucketLength;
+                for (int i = 0; i < bytesToIterate; i += MFS_RECORDSIZE)
+                {
+                    var record = ParseRecord(bucketBuffer, i, currentBucket, bucketLength);
+                    if (IsRecordInUse(record))
+                        continue;
+                    
+                    record.Name = recordName;
+                    record.Flags = flags | RecordFlags.InUse;
+                    if (flags.HasFlag(RecordFlags.Directory))
+                        InitiateDirectoryRecord(record);
+                    UpdateRecord(record);
+                    return record;
+                }
 
-                        // Do some name matching to see if we have found token
-                        int Len = 0;
-                        while (directoryBuffer[i + 68 + Len] != 0)
-                            Len++;
-                        String Name = Encoding.UTF8.GetString(directoryBuffer, i + 68, Len);
-                        //RecordFlags Flags = (RecordFlags)BitConverter.ToUInt32(fBuffer, i);
+                if (bucketLink == MFS_ENDOFCHAIN)
+                    currentBucket = ExpandDirectory(currentBucket);
+                else
+                    currentBucket = bucketLink;
+            }
+        }
 
-                        // Does it exist already?
-                        if (Name.ToLower() == LookFor.ToLower()) {
-                            Console.WriteLine("Creation - Entry did exist already");
-                            return null;
-                        }
-                    }
+        private MfsRecord CreatePath(uint directoryBucket, string path)
+        {
+            var safePath = SafePath(path);
+            Console.WriteLine("CreatePath(" + directoryBucket.ToString() + ", " + safePath + ")");
 
-                    // Handle the case where we found free entry
-                    if (End == 1) {
+            // split path into tokens
+            var tokens = safePath.Split('/');
+
+            uint startBucket = directoryBucket;
+            for (int i = 0; i < tokens.Length; i++) {
+                var token = tokens[i];
+                
+                // skip empty tokens
+                if (token == "") {
+                    continue;
+                }
+                
+                // find the token in the bucket
+                var record = FindRecord(directoryBucket, token);
+                if (record == null)
+                {
+                    record = CreateRecord(directoryBucket, token, RecordFlags.Directory);
+                    if (record == null)
+                    {
+                        Console.WriteLine($"Failed to create record {token} in path {safePath}");
                         break;
                     }
-                    
-                    // Get next bucket link
-                    if (End == 0) {
-                        PreviousBucket = IteratorBucket;
-                        IteratorBucket = _bucketMap.GetBucketLengthAndLink(IteratorBucket, out DirectoryLength);
-                    }
-                    
-                    // Have we reached end?
-                    if (IteratorBucket == MFS_ENDOFCHAIN) {
-                        End = 1;
-                    }
                 }
 
-                // Must reach here
-                MfsRecord nEntry = new MfsRecord();
-                nEntry.DirectoryBucket = (IteratorBucket == MFS_ENDOFCHAIN) ? PreviousBucket : IteratorBucket;
-                nEntry.DirectoryLength = DirectoryLength;
-                nEntry.DirectoryIndex = (uint)i;
-                return nEntry;
-            }
-            else {
-                // Variables
-                UInt32 IteratorBucket = DirectoryBucket;
-                UInt32 DirectoryLength = 0;
-                int End = 0;
-
-                while (End == 0) {
-                    // Get length of bucket
-                    _bucketMap.GetBucketLengthAndLink(IteratorBucket, out DirectoryLength);
-
-                    // Calculate the bucket we should load
-                    Byte[] directoryBuffer = _disk.Read(BucketToSector(IteratorBucket), _bucketSize * DirectoryLength);
-
-                    // Iterate the number of records
-                    for (int i = 0; i < (_bucketSize * _disk.Geometry.BytesPerSector * DirectoryLength); i += 1024) {
-                        if (directoryBuffer[i] == 0) {
-                            continue;
-                        }
-
-                        // Do some name matching to see if we have found token
-                        int nameLength = 0;
-                        while (directoryBuffer[i + 68 + nameLength] != 0)
-                            nameLength++;
-                        String Name = Encoding.UTF8.GetString(directoryBuffer, i + 68, nameLength);
-                        RecordFlags Flags = (RecordFlags)BitConverter.ToUInt32(directoryBuffer, i);
-
-                        // Have we found the record we were looking for?
-                        // This entry must be a directory
-                        if (Name.ToLower() == LookFor.ToLower()) {
-                            if (!Flags.HasFlag(RecordFlags.Directory)) {
-                                Console.WriteLine(LookFor + " is not a directory");
-                                return null;
-                            }
-
-                            // Create a new record
-                            MfsRecord nEntry = new MfsRecord();
-                            nEntry.Name = Name;
-                            nEntry.Size = BitConverter.ToUInt64(directoryBuffer, i + 48);
-                            nEntry.AllocatedSize = BitConverter.ToUInt64(directoryBuffer, i + 56);
-                            nEntry.Bucket = BitConverter.ToUInt32(directoryBuffer, i + 4);
-                            nEntry.BucketLength = BitConverter.ToUInt32(directoryBuffer, i + 8);
-
-                            nEntry.DirectoryBucket = IteratorBucket;
-                            nEntry.DirectoryLength = DirectoryLength;
-                            nEntry.DirectoryIndex = (uint)i;
-
-                            // Sanitize the case where we need to expand
-                            if (nEntry.Bucket == MFS_ENDOFCHAIN) {
-                                // Read bootsector
-                                Byte[] Bootsector = _disk.Read(_sector, 1);
-
-                                // Load some data (master-record and bucket-size)
-                                ulong MasterRecordSector = BitConverter.ToUInt64(Bootsector, 28);
-                                ulong MasterRecordMirrorSector = BitConverter.ToUInt64(Bootsector, 36);
-
-                                // Read master-record
-                                byte[] MasterRecord = _disk.Read(_sector + MasterRecordSector, 1);
-
-                                // Allocate new buckets
-                                uint initialBucketSize = 0;
-                                nEntry.Bucket = _bucketMap.AllocateBuckets(4, out initialBucketSize);
-
-                                // Update the master-record
-                                MasterRecord[76] = (byte)(_bucketMap.NextFreeBucket & 0xFF);
-                                MasterRecord[77] = (byte)((_bucketMap.NextFreeBucket >> 8) & 0xFF);
-                                MasterRecord[78] = (byte)((_bucketMap.NextFreeBucket >> 16) & 0xFF);
-                                MasterRecord[79] = (byte)((_bucketMap.NextFreeBucket >> 24) & 0xFF);
-                                _disk.Write(MasterRecord, _sector + MasterRecordSector, true);
-                                _disk.Write(MasterRecord, _sector + MasterRecordMirrorSector, true);
-
-                                // Update the file-record
-                                directoryBuffer[i + 4] = (Byte)(nEntry.Bucket & 0xFF);
-                                directoryBuffer[i + 5] = (Byte)((nEntry.Bucket >> 8) & 0xFF);
-                                directoryBuffer[i + 6] = (Byte)((nEntry.Bucket >> 16) & 0xFF);
-                                directoryBuffer[i + 7] = (Byte)((nEntry.Bucket >> 24) & 0xFF);
-
-                                directoryBuffer[i + 8] = (Byte)(initialBucketSize & 0xFF);
-                                directoryBuffer[i + 9] = (Byte)((initialBucketSize >> 8) & 0xFF);
-                                directoryBuffer[i + 10] = (Byte)((initialBucketSize >> 16) & 0xFF);
-                                directoryBuffer[i + 11] = (Byte)((initialBucketSize >> 24) & 0xFF);
-
-                                _disk.Write(directoryBuffer, BucketToSector(IteratorBucket), true);
-
-                                // Wipe directory bucket
-                                byte[] wipeBuffer = new byte[_bucketSize * _disk.Geometry.BytesPerSector * initialBucketSize];
-                                _disk.Write(wipeBuffer, BucketToSector(nEntry.Bucket), true);
-                            }
-
-                            // Go further down the rabbit hole
-                            return CreateRecursive(nEntry.Bucket, mPath.Substring(LookFor.Length));
-                        }
-                    }
-
-                    // Get next bucket link
-                    if (End == 0) {
-                        IteratorBucket = _bucketMap.GetBucketLengthAndLink(IteratorBucket, out DirectoryLength);
-                    }
-                    
-                    // Have we reached end?
-                    if (IteratorBucket == MFS_ENDOFCHAIN) {
-                        End = 1;
-                    }
+                // make sure record is a directory, should be if we just
+                // created it tho
+                if (!record.Flags.HasFlag(RecordFlags.Directory))
+                {
+                    Console.WriteLine($"Record {token} in path {safePath} is not a directory");
+                    break;
                 }
-            }
 
-            // Creation failed
-            Console.WriteLine("Failed to find " + LookFor + " in directory");
+                if (i == tokens.Length - 1)
+                    return record;
+                startBucket = record.Bucket;
+            }
             return null;
         }
-        
+
+        private void ListRecords(uint directoryBucket)
+        {
+            uint bucketLength = 0;
+            uint currentBucket = directoryBucket;
+            while (true)
+            {
+                uint bucketLink = _bucketMap.GetBucketLengthAndLink(currentBucket, out bucketLength);
+                var  bucketBuffer = _disk.Read(BucketToSector(currentBucket), _bucketSize * bucketLength);
+                
+                var bytesToIterate = _bucketSize * _disk.Geometry.BytesPerSector * bucketLength;
+                for (int i = 0; i < bytesToIterate; i += MFS_RECORDSIZE)
+                {
+                    var record = ParseRecord(bucketBuffer, i, currentBucket, bucketLength);
+                    if (!IsRecordInUse(record))
+                        continue;
+                    
+                    if (record.Flags.HasFlag(RecordFlags.Directory))
+                        Console.WriteLine("{0} (directory)", record.Name);
+                    else
+                        Console.WriteLine("{0} (file)", record.Name);
+                }
+
+                if (bucketLink == MFS_ENDOFCHAIN)
+                    break;
+                currentBucket = bucketLink;
+            }
+        }
+
+        private void ListPath(uint directoryBucket, string path)
+        {
+            var safePath = SafePath(path);
+            Console.WriteLine("ListPath(" + directoryBucket.ToString() + ", " + safePath + ")");
+
+            // split path into tokens
+            var tokens = safePath.Split('/');
+
+            uint startBucket = directoryBucket;
+            for (int i = 0; i < tokens.Length; i++) {
+                var token = tokens[i];
+                
+                // skip empty tokens
+                if (token == "") {
+                    continue;
+                }
+                
+                // find the token in the bucket
+                var record = FindRecord(directoryBucket, token);
+                if (record == null)
+                {
+                    Console.WriteLine($"Failed to find record {token} in path {safePath}");
+                    return;
+                }
+
+                // make sure record is a directory, should be if we just
+                // created it tho
+                if (!record.Flags.HasFlag(RecordFlags.Directory))
+                {
+                    Console.WriteLine($"Record {token} in path {safePath} is not a directory");
+                    break;
+                }
+                startBucket = record.Bucket;
+            }
+            
+            // now list the directory
+            ListRecords(startBucket);
+        }
+
+        private MfsRecord FindPath(uint directoryBucket, string path)
+        {
+            var safePath = SafePath(path);
+            Console.WriteLine("FindPath(" + directoryBucket.ToString() + ", " + safePath + ")");
+
+            // split path into tokens
+            var tokens = safePath.Split('/');
+
+            uint startBucket = directoryBucket;
+            MfsRecord record = null;
+            for (int i = 0; i < tokens.Length; i++) {
+                var token = tokens[i];
+                
+                // skip empty tokens
+                if (token == "") {
+                    continue;
+                }
+                
+                // find the token in the bucket
+                record = FindRecord(directoryBucket, token);
+                if (record == null)
+                {
+                    Console.WriteLine($"Failed to find record {token} in path {safePath}");
+                    return null;
+                }
+
+                // make sure record is a directory, should be if we just
+                // created it tho
+                if (!record.Flags.HasFlag(RecordFlags.Directory))
+                {
+                    Console.WriteLine($"Record {token} in path {safePath} is not a directory");
+                    record = null;
+                    break;
+                }
+                startBucket = record.Bucket;
+            }
+            return record;
+        }
+
         public FileSystem(IDisk disk, ulong startSector, ulong sectorCount)
         {
             _disk = disk;
@@ -640,7 +502,7 @@ namespace OSBuilder.FileSystems.MFS
 
         public void Dispose()
         {
-            
+            SaveNextAvailableBucket();
         }
 
         public void Initialize(IDisk disk, ulong startSector, ulong sectorCount, string vbrImage, string reservedSectorsImage)
@@ -991,7 +853,7 @@ namespace OSBuilder.FileSystems.MFS
 
             // Call our recursive function to list everything
             Console.WriteLine("Files in " + Path + ":");
-            ListRecursive(RootBucket, Path);
+            ListPath(RootBucket, Path);
             Console.WriteLine("");
             return true;
         }
@@ -1015,7 +877,6 @@ namespace OSBuilder.FileSystems.MFS
             ulong SectorsRequired = 0;
             uint BucketsRequired = 0;
 
-            // Sanitize
             if (fileContents != null) {
                 // Calculate number of sectors required
                 SectorsRequired = (ulong)fileContents.LongLength / _disk.Geometry.BytesPerSector;
@@ -1028,141 +889,27 @@ namespace OSBuilder.FileSystems.MFS
                     BucketsRequired++;
             }
 
-            // Try to locate if the record exists already
-            // Because if it exists - then we update it
-            // If it does not exist - we then create it
-            MfsRecord nEntry = ListRecursive(RootBucket, localPath, false);
-            if (nEntry != null) {
-                Console.WriteLine("File exists in table, updating");
-
-                // Handle expansion if we are trying to write more than what
-                // is currently allocated
-                if ((ulong)fileContents.LongLength > nEntry.AllocatedSize) {
-
-                    // Calculate only the difference in allocation size
-                    ulong sectorCount = ((ulong)fileContents.LongLength - nEntry.AllocatedSize) / _disk.Geometry.BytesPerSector;
-                    if ((((ulong)fileContents.LongLength - nEntry.AllocatedSize) % _disk.Geometry.BytesPerSector) > 0)
-                        sectorCount++;
-                    uint bucketCount = (uint)(sectorCount / _bucketSize);
-                    if ((sectorCount % _bucketSize) > 0)
-                        bucketCount++;
-
-                    // Do the allocation
-                    Console.WriteLine("  - allocating " + bucketCount.ToString() + " buckets");
-
-                    uint initialBucketSize = 0;
-                    uint bucketAllocation = _bucketMap.AllocateBuckets(bucketCount, out initialBucketSize);
-
-                    // Iterate to end of data chain, but keep a pointer to the previous
-                    UInt32 BucketPtr = nEntry.Bucket;
-                    UInt32 bucketPrevPtr = 0;
-                    UInt32 BucketLength = 0;
-                    while (BucketPtr != MFS_ENDOFCHAIN) {
-                        bucketPrevPtr = BucketPtr;
-                        BucketPtr = _bucketMap.GetBucketLengthAndLink(BucketPtr, out BucketLength);
-                    }
-
-                    // Update the last link to the newly allocated
-                    _bucketMap.SetNextBucket(bucketPrevPtr, bucketAllocation);
-
-                    // Update the master-record
-                    masterRecord[76] = (Byte)(_bucketMap.NextFreeBucket & 0xFF);
-                    masterRecord[77] = (Byte)((_bucketMap.NextFreeBucket >> 8) & 0xFF);
-                    masterRecord[78] = (Byte)((_bucketMap.NextFreeBucket >> 16) & 0xFF);
-                    masterRecord[79] = (Byte)((_bucketMap.NextFreeBucket >> 24) & 0xFF);
-                    _disk.Write(masterRecord, _sector + MasterRecordSector, true);
-                    _disk.Write(masterRecord, _sector + MasterRecordMirrorSector, true);
-
-                    // Update the allocated size in cached
-                    nEntry.AllocatedSize += (bucketCount * _bucketSize * _disk.Geometry.BytesPerSector);
-                }
-
-                // We should free buckets that are not used here if data size is less
-                Console.WriteLine("  - updating data for file");
-                FillBucketChain(nEntry.Bucket, nEntry.BucketLength, fileContents);
-
-                // Read the in the relevant bucket for directory
-                byte[] directoryBuffer = _disk.Read(
-                    BucketToSector(nEntry.DirectoryBucket), 
-                    _bucketSize * nEntry.DirectoryLength
-                );
-
-                // Update fields
-                directoryBuffer[nEntry.DirectoryIndex + 4] = (Byte)(nEntry.Bucket & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 5] = (Byte)((nEntry.Bucket >> 8) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 6] = (Byte)((nEntry.Bucket >> 16) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 7] = (Byte)((nEntry.Bucket >> 24) & 0xFF);
-
-                directoryBuffer[nEntry.DirectoryIndex + 8] = (Byte)(nEntry.BucketLength & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 9] = (Byte)((nEntry.BucketLength >> 8) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 10] = (Byte)((nEntry.BucketLength >> 16) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 11] = (Byte)((nEntry.BucketLength >> 24) & 0xFF);
-
-                directoryBuffer[nEntry.DirectoryIndex + 48] = (Byte)(fileContents.LongLength & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 49] = (Byte)((fileContents.LongLength >> 8) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 50] = (Byte)((fileContents.LongLength >> 16) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 51] = (Byte)((fileContents.LongLength >> 24) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 52] = (Byte)((fileContents.LongLength >> 32) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 53] = (Byte)((fileContents.LongLength >> 40) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 54] = (Byte)((fileContents.LongLength >> 48) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 55] = (Byte)((fileContents.LongLength >> 56) & 0xFF);
-
-                directoryBuffer[nEntry.DirectoryIndex + 56] = (Byte)(nEntry.AllocatedSize & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 57] = (Byte)((nEntry.AllocatedSize >> 8) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 58] = (Byte)((nEntry.AllocatedSize >> 16) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 59] = (Byte)((nEntry.AllocatedSize >> 24) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 60] = (Byte)((nEntry.AllocatedSize >> 32) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 61] = (Byte)((nEntry.AllocatedSize >> 40) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 62] = (Byte)((nEntry.AllocatedSize >> 48) & 0xFF);
-                directoryBuffer[nEntry.DirectoryIndex + 63] = (Byte)((nEntry.AllocatedSize >> 56) & 0xFF);
-
-                // Flush the modified directory back to disk
-                _disk.Write(directoryBuffer, BucketToSector(nEntry.DirectoryBucket), true);
-            }
-            else {
+            // Locate the record
+            var record = FindPath(RootBucket, localPath);
+            if (record == null)
+            {
                 Console.WriteLine("/" + localPath + " is a new " 
                     + (fileFlags.HasFlag(FileFlags.Directory) ? "directory" : "file"));
-                MfsRecord cInfo = CreateRecursive(RootBucket, localPath);
-                if (cInfo == null) {
+                record = CreatePath(RootBucket, localPath);
+                if (record == null) {
                     Console.WriteLine("The creation info returned null, somethings wrong");
                     return false;
                 }
+            }
 
-                Console.WriteLine("  - room in bucket " + cInfo.DirectoryBucket.ToString() + " at index " + cInfo.DirectoryIndex.ToString());
+            if (fileContents != null)
+            {
+                EnsureBucketSpace(record, (ulong)fileContents.LongLength);
+                FillBucketChain(record.Bucket, record.BucketLength, fileContents);
 
-                // Reload master-record and update free-bucket variable 
-                // as it could have changed when expanding directory
-                uint startBucket = MFS_ENDOFCHAIN;
-                uint initialBucketSize = 0;
-                if (fileContents != null) {
-                    startBucket = _bucketMap.AllocateBuckets(BucketsRequired, out initialBucketSize);
-
-                    // Update the master-record
-                    masterRecord = _disk.Read(_sector + MasterRecordSector, 1);
-                    masterRecord[76] = (Byte)(_bucketMap.NextFreeBucket & 0xFF);
-                    masterRecord[77] = (Byte)((_bucketMap.NextFreeBucket >> 8) & 0xFF);
-                    masterRecord[78] = (Byte)((_bucketMap.NextFreeBucket >> 16) & 0xFF);
-                    masterRecord[79] = (Byte)((_bucketMap.NextFreeBucket >> 24) & 0xFF);
-                    _disk.Write(masterRecord, _sector + MasterRecordSector, true);
-                    _disk.Write(masterRecord, _sector + MasterRecordMirrorSector, true);
-                }
-                
-                // Build flags
-                RecordFlags recordFlags = RecordFlags.InUse | RecordFlags.Chained;
-                if (fileFlags.HasFlag(FileFlags.Directory))
-                    recordFlags |= RecordFlags.Directory;
-                if (fileFlags.HasFlag(FileFlags.System))
-                    recordFlags |= RecordFlags.System;
-
-                // Create entry in base directory
-                Console.WriteLine("  - creating directory entry");
-                CreateFileRecord(Path.GetFileName(localPath), recordFlags, startBucket, initialBucketSize, fileContents, cInfo.DirectoryBucket);
-
-                // Now fill the allocated buckets with data
-                if (fileContents != null) {
-                    Console.WriteLine("  - writing file-data to bucket " + startBucket.ToString());
-                    FillBucketChain(startBucket, initialBucketSize, fileContents);
-                }
+                // Update the record
+                record.Size = (ulong)fileContents.LongLength;
+                UpdateRecord(record);
             }
             return true;
         }
@@ -1206,6 +953,7 @@ namespace OSBuilder.FileSystems.MFS
          * Represenst a file-entry in cached format */
         class MfsRecord {
             public string Name;
+            public RecordFlags Flags;
             public ulong Size;
             public ulong AllocatedSize;
             public uint Bucket;

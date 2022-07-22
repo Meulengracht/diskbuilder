@@ -99,7 +99,7 @@ namespace OSBuilder
                 var relativePath = file.Substring(source.Path.Length + 1).Replace('\\', '/');
                 var targetPath = source.Target + relativePath;
                 
-                Console.WriteLine($"{nameof(Program)} | {nameof(InstallDirectory)} | Installing: " + targetPath);
+                Console.WriteLine($"{nameof(Program)} | {nameof(InstallDirectory)} | Installing file: " + targetPath);
                 if (!fileSystem.CreateFile(targetPath, 0, File.ReadAllBytes(file))) {
                     throw new Exception($"{nameof(Program)} | {nameof(InstallDirectory)} | ERROR: Failed to install file: {file}");
                 }
@@ -165,7 +165,7 @@ namespace OSBuilder
                     throw new Exception($"{nameof(Program)} | {nameof(InstallChefPackage)} | ERROR: Failed to download {source.Package}");
                 else
                 {
-                    Console.WriteLine($"ERROR: Failed to download {source.Package}, skipping");
+                    Console.WriteLine($"FAILED, SKIPPED");
                     return;
                 }
             }
