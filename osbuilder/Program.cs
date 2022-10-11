@@ -3,6 +3,7 @@ using System.Collections;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 
 namespace OSBuilder
 {
@@ -19,9 +20,9 @@ namespace OSBuilder
             {
                 return File.ReadAllBytes(path);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                Console.WriteLine($"Failed to read file: {path}");
+                Console.WriteLine($"Failed to read file: {path} | {ex}");
                 return null;
             }
         }
@@ -141,10 +142,10 @@ namespace OSBuilder
             // is a full path already provided?
             if (Path.HasExtension(source.Target))
                 return source.Target;
-            return Path.Combine(source.Target, source.Package + ".pack");
+            return Path.Combine(source.Target, source.Package.Replace("/", ".") + ".pack");
         }
 
-        static async void InstallChefPackage(FileSystems.IFileSystem fileSystem, ProjectSource source)
+        static async Task InstallChefPackage(FileSystems.IFileSystem fileSystem, ProjectSource source)
         {
             if (string.IsNullOrEmpty(source.Package))
                 throw new Exception($"{nameof(Program)} | {nameof(InstallChefPackage)} | ERROR: Package name is not provided");
@@ -200,7 +201,7 @@ namespace OSBuilder
                     InstallDirectory(fileSystem, source);
                     break;
                 case "chef":
-                    InstallChefPackage(fileSystem, source);
+                    InstallChefPackage(fileSystem, source).Wait();
                     break;
                 default:
                     throw new Exception($"{nameof(Program)} | {nameof(InstallSource)} | ERROR: Unknown source type: {source.Type}");

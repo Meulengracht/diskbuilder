@@ -4,6 +4,9 @@ namespace OSBuilder.Integrations
 {
     class ChefDownloadResponse
     {
+        [JsonPropertyName("pack-revision")]
+        public int Revision { get; set; }
+
         [JsonPropertyName("sas-token")]
         public string SasToken { get; set; }
 

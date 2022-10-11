@@ -28,26 +28,28 @@ namespace OSBuilder.Integrations
                 throw new Exception($"{nameof(ChefClient)} | {nameof(DownloadAsync)} | ERROR: Blob does not exist: {fullSasUrl}");
 
             var blob = blobClient.DownloadStreaming().Value;
-            var fileStream = File.Create(path);
-            var buffer = new byte[81920];
-            using (var progress = new Utils.ProgressBar())
+            using (var fileStream = File.Create(path))
             {
-                long totalBytesDownloaded = 0;
-                long totalBytes = blob.Details.ContentLength;
-                progress.Report(0);
-                do 
+                var buffer = new byte[81920];
+                using (var progress = new Utils.ProgressBar())
                 {
-                    int bytesRead = await blob.Content.ReadAsync(buffer, 0, buffer.Length);
-                    if (bytesRead == 0)
-                        break;
+                    long totalBytesDownloaded = 0;
+                    long totalBytes = blob.Details.ContentLength;
+                    progress.Report(0);
+                    do
+                    {
+                        int bytesRead = await blob.Content.ReadAsync(buffer, 0, buffer.Length);
+                        if (bytesRead == 0)
+                            break;
 
-                    await fileStream.WriteAsync(buffer, 0, bytesRead);
+                        await fileStream.WriteAsync(buffer, 0, bytesRead);
 
-                    totalBytesDownloaded += bytesRead;
+                        totalBytesDownloaded += bytesRead;
 
-                    Console.WriteLine((double)totalBytesDownloaded / (double)totalBytes);
-                } while (true);
-                progress.Report(1);
+                        progress.Report((double)totalBytesDownloaded / (double)totalBytes);
+                    } while (true);
+                    progress.Report(1);
+                }
             }
             Console.WriteLine("Success");
         }
@@ -63,19 +65,20 @@ namespace OSBuilder.Integrations
             var downloadUrl = GetDownloadUrl(publisher, name, platform, arch, channel);
 
             // create the http client
-            var httpClient = new HttpClient();
-            
-            // get the download instructions and deserialize from json
-            var response = await httpClient.GetAsync(downloadUrl);
-            if (!response.IsSuccessStatusCode)
-                throw new Exception($"{nameof(ChefClient)} | {nameof(DownloadPack)} | ERROR: Failed to find chef package");
-            
-            var body = await response.Content.ReadAsStringAsync();
-            var downloadResponse = JsonSerializer.Deserialize<ChefDownloadResponse>(body);
-            if (downloadResponse == null)
-                throw new Exception($"{nameof(ChefClient)} | {nameof(DownloadPack)} | ERROR: Invalid download response: {body}");
-            
-            await DownloadAsync(downloadResponse.BlobUrl, path);
+            using (var httpClient = new HttpClient())
+            {
+                // get the download instructions and deserialize from json
+                var response = await httpClient.GetAsync(downloadUrl);
+                if (!response.IsSuccessStatusCode)
+                    throw new Exception($"{nameof(ChefClient)} | {nameof(DownloadPack)} | ERROR: Failed to find chef package");
+
+                var body = await response.Content.ReadAsStringAsync();
+                var downloadResponse = JsonSerializer.Deserialize<ChefDownloadResponse>(body);
+                if (downloadResponse == null)
+                    throw new Exception($"{nameof(ChefClient)} | {nameof(DownloadPack)} | ERROR: Invalid download response: {body}");
+
+                await DownloadAsync(downloadResponse.BlobUrl, path);
+            }
         }
     }
 }
