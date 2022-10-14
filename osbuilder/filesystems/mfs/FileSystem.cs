@@ -134,18 +134,22 @@ namespace OSBuilder.FileSystems.MFS
 
             // Iterate to end of data chain, but keep a pointer to the previous
             uint BucketPtr = record.Bucket;
-            uint bucketPrevPtr = 0;
+            uint bucketPrevPtr = MFS_ENDOFCHAIN;
             uint BucketLength = 0;
             while (BucketPtr != MFS_ENDOFCHAIN) {
                 bucketPrevPtr = BucketPtr;
                 BucketPtr = _bucketMap.GetBucketLengthAndLink(BucketPtr, out BucketLength);
             }
 
-            // Update the last link to the newly allocated
-            _bucketMap.SetNextBucket(bucketPrevPtr, bucketAllocation);
+            // Update the last link to the newly allocated, we only do this if 
+            // the previous one was not end of chain (none allocated for record)
+            if (bucketPrevPtr != MFS_ENDOFCHAIN)
+                _bucketMap.SetNextBucket(bucketPrevPtr, bucketAllocation);
 
             // Update the allocated size in cached
             record.AllocatedSize += (bucketCount * _bucketSize * _disk.Geometry.BytesPerSector);
+
+            // Initiate the bucket in the record if it was new
             if (record.Bucket == MFS_ENDOFCHAIN)
             {
                 record.Bucket = bucketAllocation;
@@ -198,10 +202,10 @@ namespace OSBuilder.FileSystems.MFS
             byte[] name = Encoding.UTF8.GetBytes(record.Name);
             Array.Copy(name, 0, buffer, offset + 68, name.Length);
             Array.Copy(BitConverter.GetBytes((uint)record.Flags), 0, buffer, offset, 4);
-            Array.Copy(BitConverter.GetBytes(record.Size), 0, buffer, offset + 48, 8);
-            Array.Copy(BitConverter.GetBytes(record.AllocatedSize), 0, buffer, offset + 56, 8);
             Array.Copy(BitConverter.GetBytes(record.Bucket), 0, buffer, offset + 4, 4);
             Array.Copy(BitConverter.GetBytes(record.BucketLength), 0, buffer, offset + 8, 4);
+            Array.Copy(BitConverter.GetBytes(record.Size), 0, buffer, offset + 48, 8);
+            Array.Copy(BitConverter.GetBytes(record.AllocatedSize), 0, buffer, offset + 56, 8);
         }
 
         private MfsRecord FindRecord(uint directoryBucket, string recordName)
@@ -290,6 +294,10 @@ namespace OSBuilder.FileSystems.MFS
                     Utils.Logger.Instance.Debug($"CreateRecord record {i} was available");
                     record.Name = recordName;
                     record.Flags = flags | RecordFlags.InUse;
+                    record.Bucket = MFS_ENDOFCHAIN;
+                    record.BucketLength = 0;
+                    record.AllocatedSize = 0;
+                    record.Size = 0;
                     if (flags.HasFlag(RecordFlags.Directory))
                         InitiateDirectoryRecord(record);
                     UpdateRecord(record);
