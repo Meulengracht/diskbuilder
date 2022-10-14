@@ -295,7 +295,17 @@ namespace OSBuilder.FileSystems.MFS
             }
         }
 
-        private MfsRecord CreatePath(uint directoryBucket, string path)
+        private RecordFlags GetRecordFlags(FileFlags fileFlags)
+        {
+            RecordFlags recFlags = 0;
+
+            if (fileFlags.HasFlag(FileFlags.Directory)) recFlags |= RecordFlags.Directory;
+            if (fileFlags.HasFlag(FileFlags.System))    recFlags |= RecordFlags.System;
+
+            return recFlags;
+        }
+
+        private MfsRecord CreatePath(uint directoryBucket, string path, FileFlags fileFlags)
         {
             var safePath = SafePath(path);
             Console.WriteLine("CreatePath(" + directoryBucket.ToString() + ", " + safePath + ")");
@@ -306,6 +316,8 @@ namespace OSBuilder.FileSystems.MFS
             uint startBucket = directoryBucket;
             for (int i = 0; i < tokens.Length; i++) {
                 var token = tokens[i];
+                var isLast = i == tokens.Length - 1;
+                var flags = isLast ? GetRecordFlags(fileFlags) : RecordFlags.Directory;
                 
                 // skip empty tokens
                 if (token == "") {
@@ -313,10 +325,10 @@ namespace OSBuilder.FileSystems.MFS
                 }
                 
                 // find the token in the bucket
-                var record = FindRecord(directoryBucket, token);
+                var record = FindRecord(startBucket, token);
                 if (record == null)
                 {
-                    record = CreateRecord(directoryBucket, token, RecordFlags.Directory);
+                    record = CreateRecord(startBucket, token, flags);
                     if (record == null)
                     {
                         Console.WriteLine($"Failed to create record {token} in path {safePath}");
@@ -332,8 +344,10 @@ namespace OSBuilder.FileSystems.MFS
                     break;
                 }
 
-                if (i == tokens.Length - 1)
+                // successful termination condition
+                if (isLast)
                     return record;
+                
                 startBucket = record.Bucket;
             }
             return null;
@@ -425,7 +439,7 @@ namespace OSBuilder.FileSystems.MFS
                 }
                 
                 // find the token in the bucket
-                record = FindRecord(directoryBucket, token);
+                record = FindRecord(startBucket, token);
                 if (record == null)
                 {
                     Console.WriteLine($"Failed to find record {token} in path {safePath}");
@@ -873,29 +887,29 @@ namespace OSBuilder.FileSystems.MFS
 
             // Read master-record
             byte[] masterRecord = _disk.Read(_sector + MasterRecordSector, 1);
-            uint RootBucket = BitConverter.ToUInt32(masterRecord, 80);
-            ulong SectorsRequired = 0;
-            uint BucketsRequired = 0;
+            uint rootBucket = BitConverter.ToUInt32(masterRecord, 80);
+            ulong sectorsRequired = 0;
+            uint bucketsRequired = 0;
 
             if (fileContents != null) {
                 // Calculate number of sectors required
-                SectorsRequired = (ulong)fileContents.LongLength / _disk.Geometry.BytesPerSector;
+                sectorsRequired = (ulong)fileContents.LongLength / _disk.Geometry.BytesPerSector;
                 if (((ulong)fileContents.LongLength % _disk.Geometry.BytesPerSector) > 0)
-                    SectorsRequired++;
+                    sectorsRequired++;
 
                 // Calculate the number of buckets required
-                BucketsRequired = (uint)(SectorsRequired / _bucketSize);
-                if ((SectorsRequired % _bucketSize) > 0)
-                    BucketsRequired++;
+                bucketsRequired = (uint)(sectorsRequired / _bucketSize);
+                if ((sectorsRequired % _bucketSize) > 0)
+                    bucketsRequired++;
             }
 
             // Locate the record
-            var record = FindPath(RootBucket, localPath);
+            var record = FindPath(rootBucket, localPath);
             if (record == null)
             {
                 Console.WriteLine("/" + localPath + " is a new " 
                     + (fileFlags.HasFlag(FileFlags.Directory) ? "directory" : "file"));
-                record = CreatePath(RootBucket, localPath);
+                record = CreatePath(rootBucket, localPath, fileFlags);
                 if (record == null) {
                     Console.WriteLine("The creation info returned null, somethings wrong");
                     return false;
