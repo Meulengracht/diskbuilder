@@ -420,10 +420,24 @@ namespace OSBuilder.FileSystems.MFS
             ListRecords(startBucket);
         }
 
+        private MfsRecord CreateRootRecord()
+        {
+            return new MfsRecord {
+                Name = "<root>",
+                Flags = RecordFlags.Directory | RecordFlags.System,
+            };
+        }
+
         private MfsRecord FindPath(uint directoryBucket, string path)
         {
             var safePath = SafePath(path);
             Console.WriteLine("FindPath(" + directoryBucket.ToString() + ", " + safePath + ")");
+
+            // If the root path was specified (/ or empty), then we must fake the root
+            // record for MFS
+            if (string.IsNullOrWhiteSpace(safePath)) {
+                return CreateRootRecord();
+            }
 
             // split path into tokens
             var tokens = safePath.Split('/');
