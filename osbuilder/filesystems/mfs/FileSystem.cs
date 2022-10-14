@@ -126,11 +126,11 @@ namespace OSBuilder.FileSystems.MFS
                 bucketCount++;
 
             // Do the allocation
-            Console.WriteLine("  - allocating " + bucketCount.ToString() + " buckets");
+            Utils.Logger.Instance.Debug("  - allocating " + bucketCount.ToString() + " buckets");
 
             uint initialBucketSize = 0;
             uint bucketAllocation = _bucketMap.AllocateBuckets(bucketCount, out initialBucketSize);
-            Console.WriteLine("  - allocated bucket " + bucketAllocation.ToString());
+            Utils.Logger.Instance.Debug("  - allocated bucket " + bucketAllocation.ToString());
 
             // Iterate to end of data chain, but keep a pointer to the previous
             uint BucketPtr = record.Bucket;
@@ -258,28 +258,36 @@ namespace OSBuilder.FileSystems.MFS
 
         private void UpdateRecord(MfsRecord record)
         {
-            var bucketBuffer = _disk.Read(BucketToSector(record.DirectoryBucket), _bucketSize * record.BucketLength);
+            Utils.Logger.Instance.Debug($"UpdateRecord(record={record.Name})");
+            Utils.Logger.Instance.Debug($"UpdateRecord reading sector {BucketToSector(record.DirectoryBucket)}, length {_bucketSize * record.DirectoryLength}");
+            var bucketBuffer = _disk.Read(BucketToSector(record.DirectoryBucket), _bucketSize * record.DirectoryLength);
             var offset = record.DirectoryIndex * MFS_RECORDSIZE;
+            Utils.Logger.Instance.Debug($"UpdateRecord record offset at {offset}");
             WriteRecord(bucketBuffer, (int)offset, record);
             _disk.Write(bucketBuffer, BucketToSector(record.DirectoryBucket), true);
         }
 
         private MfsRecord CreateRecord(uint directoryBucket, string recordName, RecordFlags flags)
         {
+            Utils.Logger.Instance.Debug("CreateRecord(" + directoryBucket.ToString() + ", " + recordName + ")");
             uint bucketLength = 0;
             uint currentBucket = directoryBucket;
             while (true)
             {
+                Utils.Logger.Instance.Debug($"CreateRecord retrieving link and length of bucket {currentBucket}");
                 uint bucketLink = _bucketMap.GetBucketLengthAndLink(currentBucket, out bucketLength);
+                Utils.Logger.Instance.Debug($"CreateRecord reading sector {BucketToSector(currentBucket)}, count {_bucketSize * bucketLength}");
                 var  bucketBuffer = _disk.Read(BucketToSector(currentBucket), _bucketSize * bucketLength);
                 
                 var bytesToIterate = _bucketSize * _disk.Geometry.BytesPerSector * bucketLength;
                 for (int i = 0; i < bytesToIterate; i += MFS_RECORDSIZE)
                 {
+                    Utils.Logger.Instance.Debug($"CreateRecord parsing record {i}");
                     var record = ParseRecord(bucketBuffer, i, currentBucket, bucketLength);
                     if (IsRecordInUse(record))
                         continue;
                     
+                    Utils.Logger.Instance.Debug($"CreateRecord record {i} was available");
                     record.Name = recordName;
                     record.Flags = flags | RecordFlags.InUse;
                     if (flags.HasFlag(RecordFlags.Directory))
@@ -308,7 +316,7 @@ namespace OSBuilder.FileSystems.MFS
         private MfsRecord CreatePath(uint directoryBucket, string path, FileFlags fileFlags)
         {
             var safePath = SafePath(path);
-            Console.WriteLine("CreatePath(" + directoryBucket.ToString() + ", " + safePath + ")");
+            Utils.Logger.Instance.Debug("CreatePath(" + directoryBucket.ToString() + ", " + safePath + ")");
 
             // split path into tokens
             var tokens = safePath.Split('/');
@@ -331,16 +339,16 @@ namespace OSBuilder.FileSystems.MFS
                     record = CreateRecord(startBucket, token, flags);
                     if (record == null)
                     {
-                        Console.WriteLine($"Failed to create record {token} in path {safePath}");
+                        Utils.Logger.Instance.Error($"Failed to create record {token} in path {safePath}");
                         break;
                     }
                 }
 
                 // make sure record is a directory, should be if we just
                 // created it tho
-                if (!record.Flags.HasFlag(RecordFlags.Directory))
+                if (!isLast && !record.Flags.HasFlag(RecordFlags.Directory))
                 {
-                    Console.WriteLine($"Record {token} in path {safePath} is not a directory");
+                    Utils.Logger.Instance.Error($"Record {token} in path {safePath} is not a directory");
                     break;
                 }
 
@@ -384,7 +392,7 @@ namespace OSBuilder.FileSystems.MFS
         private void ListPath(uint directoryBucket, string path)
         {
             var safePath = SafePath(path);
-            Console.WriteLine("ListPath(" + directoryBucket.ToString() + ", " + safePath + ")");
+            Utils.Logger.Instance.Debug("ListPath(" + directoryBucket.ToString() + ", " + safePath + ")");
 
             // split path into tokens
             var tokens = safePath.Split('/');
@@ -402,7 +410,7 @@ namespace OSBuilder.FileSystems.MFS
                 var record = FindRecord(directoryBucket, token);
                 if (record == null)
                 {
-                    Console.WriteLine($"Failed to find record {token} in path {safePath}");
+                    Utils.Logger.Instance.Error($"Failed to find record {token} in path {safePath}");
                     return;
                 }
 
@@ -410,7 +418,7 @@ namespace OSBuilder.FileSystems.MFS
                 // created it tho
                 if (!record.Flags.HasFlag(RecordFlags.Directory))
                 {
-                    Console.WriteLine($"Record {token} in path {safePath} is not a directory");
+                    Utils.Logger.Instance.Error($"Record {token} in path {safePath} is not a directory");
                     break;
                 }
                 startBucket = record.Bucket;
@@ -431,7 +439,7 @@ namespace OSBuilder.FileSystems.MFS
         private MfsRecord FindPath(uint directoryBucket, string path)
         {
             var safePath = SafePath(path);
-            Console.WriteLine("FindPath(" + directoryBucket.ToString() + ", " + safePath + ")");
+            Utils.Logger.Instance.Debug("FindPath(" + directoryBucket.ToString() + ", " + safePath + ")");
 
             // If the root path was specified (/ or empty), then we must fake the root
             // record for MFS
@@ -456,7 +464,7 @@ namespace OSBuilder.FileSystems.MFS
                 record = FindRecord(startBucket, token);
                 if (record == null)
                 {
-                    Console.WriteLine($"Failed to find record {token} in path {safePath}");
+                    Utils.Logger.Instance.Error($"Failed to find record {token} in path {safePath}");
                     return null;
                 }
 
@@ -464,7 +472,7 @@ namespace OSBuilder.FileSystems.MFS
                 // created it tho
                 if (!record.Flags.HasFlag(RecordFlags.Directory))
                 {
-                    Console.WriteLine($"Record {token} in path {safePath} is not a directory");
+                    Utils.Logger.Instance.Error($"Record {token} in path {safePath} is not a directory");
                     record = null;
                     break;
                 }
@@ -754,7 +762,7 @@ namespace OSBuilder.FileSystems.MFS
         public void InstallBootloaders()
         {
             // Load up boot-sector
-            Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Loading stage1 bootloader ({_vbrImage})");
+            Utils.Logger.Instance.Info($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Loading stage1 bootloader ({_vbrImage})");
             byte[] bootsector = File.ReadAllBytes(_vbrImage);
 
             // Modify boot-sector by preserving the header 44
@@ -765,19 +773,19 @@ namespace OSBuilder.FileSystems.MFS
             bootsector[8] = 0x1;
 
             // Flush the modified sector back to disk
-            Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Writing stage1 bootloader");
+            Utils.Logger.Instance.Info($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Writing stage1 bootloader");
             _disk.Write(bootsector, _sector, true);
 
             // Write stage2 to disk
             if (!string.IsNullOrEmpty(_reservedSectorsImage))
             {
-                Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Loading stage2 bootloader ({_reservedSectorsImage})");
+                Utils.Logger.Instance.Info($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Loading stage2 bootloader ({_reservedSectorsImage})");
                 byte[] stage2Data = File.ReadAllBytes(_reservedSectorsImage);
                 byte[] sectorAlignedBuffer = new Byte[((stage2Data.Length / _disk.Geometry.BytesPerSector) + 1) * _disk.Geometry.BytesPerSector];
                 stage2Data.CopyTo(sectorAlignedBuffer, 0);
 
                 // Make sure we allocate a sector-aligned buffer
-                Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Writing stage2 bootloader");
+                Utils.Logger.Instance.Info($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Writing stage2 bootloader");
                 _disk.Write(sectorAlignedBuffer, _sector + 1, true);
             }
         }
@@ -792,13 +800,13 @@ namespace OSBuilder.FileSystems.MFS
             {
                 if (!File.Exists(_vbrImage))
                 {
-                    Console.WriteLine($"{nameof(FileSystem)} | {nameof(Format)} | Bootloader {_vbrImage} is missing, cannot format partition");
+                    Utils.Logger.Instance.Error($"{nameof(FileSystem)} | {nameof(Format)} | Bootloader {_vbrImage} is missing, cannot format partition");
                     return false;
                 }
             }
 
             ulong partitionSizeBytes = _sectorCount * _disk.Geometry.BytesPerSector;
-            Console.WriteLine("Format - size of partition " + partitionSizeBytes.ToString() + " bytes");
+            Utils.Logger.Instance.Info("Format - size of partition " + partitionSizeBytes.ToString() + " bytes");
 
             _bucketSize = DetermineBucketSize(_sectorCount * _disk.Geometry.BytesPerSector);
             uint masterBucketSectorOffset = (uint)_reservedSectorCount;
@@ -806,8 +814,8 @@ namespace OSBuilder.FileSystems.MFS
             // round the number of reserved sectors up to a equal of buckets
             _reservedSectorCount = (ushort)((((_reservedSectorCount + 1) / _bucketSize) + 1) * _bucketSize);
 
-            Console.WriteLine("Format - Bucket Size: " + _bucketSize.ToString());
-            Console.WriteLine("Format - Reserved Sectors: " + _reservedSectorCount.ToString());
+            Utils.Logger.Instance.Info("Format - Bucket Size: " + _bucketSize.ToString());
+            Utils.Logger.Instance.Info("Format - Reserved Sectors: " + _reservedSectorCount.ToString());
 
             _bucketMap = new BucketMap(_disk, 
                 (_sector + _reservedSectorCount), 
@@ -819,11 +827,9 @@ namespace OSBuilder.FileSystems.MFS
 
             ulong masterBucketSector = _sector + masterBucketSectorOffset;
             ulong mirrorMasterBucketSector = _bucketMap.MapStartSector - 1;
-
-            // Debug
-            Console.WriteLine("Format - Creating master-records");
-            Console.WriteLine("Format - Original: " + masterBucketSectorOffset.ToString());
-            Console.WriteLine("Format - Mirror: " + mirrorMasterBucketSector.ToString());
+            Utils.Logger.Instance.Debug("Format - Creating master-records");
+            Utils.Logger.Instance.Debug("Format - Original: " + masterBucketSectorOffset.ToString());
+            Utils.Logger.Instance.Debug("Format - Mirror: " + mirrorMasterBucketSector.ToString());
 
             // Allocate for:
             // - Root directory - 8 buckets
@@ -833,8 +839,8 @@ namespace OSBuilder.FileSystems.MFS
             uint rootIndex = _bucketMap.AllocateBuckets(8, out initialBucketSize);
             uint journalIndex = _bucketMap.AllocateBuckets(8, out initialBucketSize);
             uint badBucketIndex = _bucketMap.AllocateBuckets(1, out initialBucketSize);
-            Console.WriteLine("Format - Free bucket pointer after setup: " + _bucketMap.NextFreeBucket.ToString());
-            Console.WriteLine("Format - Wiping root data");
+            Utils.Logger.Instance.Debug("Format - Free bucket pointer after setup: " + _bucketMap.NextFreeBucket.ToString());
+            Utils.Logger.Instance.Debug("Format - Wiping root data");
 
             // Allocate a zero array to fill the allocated sectors with
             byte[] wipeBuffer = new byte[_bucketSize * _disk.Geometry.BytesPerSector];
@@ -845,11 +851,11 @@ namespace OSBuilder.FileSystems.MFS
             _disk.Write(wipeBuffer, BucketToSector(journalIndex), true);
 
             // build master record
-            Console.WriteLine("Format - Installing Master Records");
+            Utils.Logger.Instance.Info("Format - Installing Master Records");
             BuildMasterRecord(rootIndex, journalIndex, badBucketIndex, masterBucketSector, mirrorMasterBucketSector);
 
             // install vbr
-            Console.WriteLine("Format - Installing VBR");
+            Utils.Logger.Instance.Info("Format - Installing VBR");
             BuildVBR(masterBucketSector, mirrorMasterBucketSector);
 
             // make bootable if requested
@@ -921,11 +927,11 @@ namespace OSBuilder.FileSystems.MFS
             var record = FindPath(rootBucket, localPath);
             if (record == null)
             {
-                Console.WriteLine("/" + localPath + " is a new " 
+                Utils.Logger.Instance.Info("/" + localPath + " is a new " 
                     + (fileFlags.HasFlag(FileFlags.Directory) ? "directory" : "file"));
                 record = CreatePath(rootBucket, localPath, fileFlags);
                 if (record == null) {
-                    Console.WriteLine("The creation info returned null, somethings wrong");
+                    Utils.Logger.Instance.Error("The creation info returned null, somethings wrong");
                     return false;
                 }
             }

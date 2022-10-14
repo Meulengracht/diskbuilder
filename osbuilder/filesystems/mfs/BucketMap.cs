@@ -71,10 +71,10 @@ namespace OSBuilder.FileSystems.MFS
             // Reserve an additional bucket for the MasterBucketMirror
             mapBucketCount--; 
 
-            Console.WriteLine("MfsBucketMap: Start Sector: " + _mapSector.ToString());
-            Console.WriteLine("MfsBucketMap: Map Size (bytes): " + maxMapSize.ToString());
-            Console.WriteLine("MfsBucketMap: Available Buckets: " + mapBucketCount.ToString());
-            Console.WriteLine("MfsBucketMap: Building map");
+            Utils.Logger.Instance.Debug("MfsBucketMap: Start Sector: " + _mapSector.ToString());
+            Utils.Logger.Instance.Debug("MfsBucketMap: Map Size (bytes): " + maxMapSize.ToString());
+            Utils.Logger.Instance.Debug("MfsBucketMap: Available Buckets: " + mapBucketCount.ToString());
+            Utils.Logger.Instance.Info("MfsBucketMap: Building map");
 
             // Seek to start of map
             _disk.Seek((Int64)(_mapSector * _disk.Geometry.BytesPerSector));

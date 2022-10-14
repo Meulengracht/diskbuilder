@@ -34,7 +34,7 @@ namespace OSBuilder.FileSystems.FAT
             _disk.Seek((long)(_sector * _disk.Geometry.BytesPerSector));
 
             // Load up boot-sector
-            Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Loading stage1 bootloader ({_vbrImage})");
+            Utils.Logger.Instance.Info($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Loading stage1 bootloader ({_vbrImage})");
             byte[] bootsector = File.ReadAllBytes(_vbrImage);
 
             // Modify boot-sector by preserving the header, size 79 (B-5A)
@@ -42,19 +42,19 @@ namespace OSBuilder.FileSystems.FAT
             Buffer.BlockCopy(existingSectorContent, 11, bootsector, 11, 78);
 
             // Flush the modified sector back to disk
-            Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Writing stage1 bootloader");
+            Utils.Logger.Instance.Info($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Writing stage1 bootloader");
             _disk.Write(bootsector, _sector, true);
 
             // Write stage2 to disk
             if (!string.IsNullOrEmpty(_reservedSectorsImage))
             {
-                Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Loading stage2 bootloader ({_reservedSectorsImage})");
+                Utils.Logger.Instance.Info($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Loading stage2 bootloader ({_reservedSectorsImage})");
                 byte[] stage2Data = File.ReadAllBytes(_reservedSectorsImage);
                 byte[] sectorAlignedBuffer = new Byte[((stage2Data.Length / _disk.Geometry.BytesPerSector) + 1) * _disk.Geometry.BytesPerSector];
                 stage2Data.CopyTo(sectorAlignedBuffer, 0);
 
                 // Make sure we allocate a sector-aligned buffer
-                Console.WriteLine($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Writing stage2 bootloader");
+                Utils.Logger.Instance.Info($"{nameof(FileSystem)} | {nameof(InstallBootloaders)} | Writing stage2 bootloader");
                 _disk.Write(sectorAlignedBuffer, _sector + 1, true);
             }
         }

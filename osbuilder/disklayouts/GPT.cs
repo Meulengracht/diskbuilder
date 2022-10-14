@@ -115,7 +115,7 @@ namespace OSBuilder.DiskLayouts
             if (GetFreeSectorCount() < partitionSize)
             {
                 partitionSize = GetFreeSectorCount();
-                Console.WriteLine("AddPartition - not enough space, reducing partition size to " + partitionSize + " sectors");
+                Utils.Logger.Instance.Warning("AddPartition - not enough space, reducing partition size to " + partitionSize + " sectors");
             }
 
             // Initialize the file-system
@@ -132,7 +132,7 @@ namespace OSBuilder.DiskLayouts
             if (_disk == null)
                 return false;
 
-            Console.WriteLine($"{nameof(MBR)} | {nameof(FinalizeLayout)} | Loading mbr (mbr-gpt.vbr)");
+            Utils.Logger.Instance.Info($"{nameof(MBR)} | {nameof(FinalizeLayout)} | Loading mbr (mbr-gpt.vbr)");
             byte[] mbr = ResourceLoader.Load("mbr-gpt.vbr");
 
             _disk.Write(mbr, 0, true);

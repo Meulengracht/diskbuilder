@@ -112,20 +112,20 @@ namespace OSBuilder
                 OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, new SafeFileHandle(IntPtr.Zero, true));
             if (_nativeHandle.IsInvalid)
             {
-                Console.WriteLine("Failed to open disk with id " + _deviceId);
+                Utils.Logger.Instance.Error("Failed to open disk with id " + _deviceId);
                 return false;
             }
 
             // Lock disk and unmount
             if (!DeviceIoControl(_nativeHandle.DangerousGetHandle(), FSCTL_LOCK_VOLUME, IntPtr.Zero, 0, IntPtr.Zero, 0, out lpBytesReturned, IntPtr.Zero))
             {
-                Console.WriteLine("Failed to lock disk with id " + _deviceId);
+                Utils.Logger.Instance.Error("Failed to lock disk with id " + _deviceId);
                 return false;
             }
                 
             if (!DeviceIoControl(_nativeHandle.DangerousGetHandle(), FSCTL_DISMOUNT_VOLUME, IntPtr.Zero, 0, IntPtr.Zero, 0, out lpBytesReturned, IntPtr.Zero))
             {
-                Console.WriteLine("Failed to unmount disk with id " + _deviceId);
+                Utils.Logger.Instance.Error("Failed to unmount disk with id " + _deviceId);
                 return false;
             }
             return true;

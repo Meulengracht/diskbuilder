@@ -22,7 +22,7 @@ namespace OSBuilder
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to read file: {path} | {ex}");
+                Utils.Logger.Instance.Error($"Failed to read file: {path} | {ex}");
                 return null;
             }
         }
@@ -35,7 +35,7 @@ namespace OSBuilder
             }
             catch (Exception)
             {
-                Console.WriteLine($"Failed to stat source: {path}");
+                Utils.Logger.Instance.Error($"Failed to stat source: {path}");
                 return null;
             }
         }
@@ -166,7 +166,7 @@ namespace OSBuilder
                     throw new Exception($"{nameof(Program)} | {nameof(InstallChefPackage)} | ERROR: Failed to download {source.Package}");
                 else
                 {
-                    Console.WriteLine($"FAILED, SKIPPED");
+                    Utils.Logger.Instance.Error($"FAILED, SKIPPED");
                     return;
                 }
             }
@@ -265,7 +265,7 @@ namespace OSBuilder
                         currentDisk = DetectDiskType(path);
                         if (!currentDisk.Open())
                         {
-                            Console.WriteLine("Failed to open disk: " + path);
+                            Utils.Logger.Instance.Error("Failed to open disk: " + path);
                             currentDisk = null;
                             break;
                         }
@@ -276,7 +276,7 @@ namespace OSBuilder
                         currentScheme = DetectDiskScheme(currentDisk);
                         if (!currentScheme.Open(currentDisk))
                         {
-                            Console.WriteLine("Failed to open disk layout");
+                            Utils.Logger.Instance.Error("Failed to open disk layout");
                             currentScheme = null;
                             currentDisk = null;
                         }
@@ -293,7 +293,7 @@ namespace OSBuilder
                         int index = int.Parse(inputTokens[1]);
                         if (index < 0 || index >= currentScheme.GetFileSystems().Count())
                         {
-                            Console.WriteLine("Invalid filesystem index");
+                            Utils.Logger.Instance.Error("Invalid filesystem index");
                             break;
                         }
                         
@@ -305,7 +305,7 @@ namespace OSBuilder
                         string sourcePath = inputTokens[1];
                         string targetPath = inputTokens[2];
                         if (currentFileSystem == null) {
-                            Console.WriteLine("No filesystem selected");
+                            Utils.Logger.Instance.Error("No filesystem selected");
                             continue;
                         }
                         currentFileSystem.CreateFile(targetPath, FileSystems.FileFlags.None, File.ReadAllBytes(sourcePath));
@@ -314,7 +314,7 @@ namespace OSBuilder
                     {
                         string path = inputTokens[1];
                         if (currentFileSystem == null) {
-                            Console.WriteLine("No filesystem selected");
+                            Utils.Logger.Instance.Error("No filesystem selected");
                             continue;
                         }
                         currentFileSystem.ListDirectory(path);
@@ -455,8 +455,8 @@ namespace OSBuilder
             
             ulong diskSizeInMBytes = GetMByteCountFromString(config.Size);
             ulong diskSectorCount = GetSectorCountFromMB(512, diskSizeInMBytes);
-            Console.WriteLine($"{nameof(Program)} | {nameof(SilentInstall)} | Disk will be sized at " + diskSizeInMBytes.ToString() + "mb");
-            Console.WriteLine($"{nameof(Program)} | {nameof(SilentInstall)} | Disk sector count " + diskSectorCount.ToString());
+            Utils.Logger.Instance.Info($"{nameof(Program)} | {nameof(SilentInstall)} | Disk will be sized at " + diskSizeInMBytes.ToString() + "mb");
+            Utils.Logger.Instance.Info($"{nameof(Program)} | {nameof(SilentInstall)} | Disk sector count " + diskSectorCount.ToString());
             if (diskSizeInMBytes < 64)
                 throw new Exception($"{nameof(Program)} | {nameof(SilentInstall)} | ERROR: Disk size must be at least 64mb");
 
@@ -534,6 +534,10 @@ namespace OSBuilder
                             installationType = args[++i];
                         else
                             throw new ArgumentException($"{nameof(Program)} | {nameof(Main)} | ERROR: Missing argument for --target");
+                    }
+                    else if (args[i].ToLower() == "--v")
+                    {
+                        Utils.Logger.Instance.SetLevel(Utils.LogLevel.DEBUG);
                     }
                     else
                     {

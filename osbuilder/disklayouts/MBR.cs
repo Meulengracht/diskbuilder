@@ -67,7 +67,7 @@ namespace OSBuilder.DiskLayouts
             var byteOffset = 446 + (partition * 16);
             ulong partitionStart = fileSystem.GetSectorStart();
             ulong partitionEnd = fileSystem.GetSectorStart() + fileSystem.GetSectorCount();
-            Console.WriteLine("partition " + partition.ToString() + 
+            Utils.Logger.Instance.Debug("partition " + partition.ToString() + 
                 " - start: " + partitionStart.ToString() +
                 ", end: " + partitionEnd.ToString());
 
@@ -83,9 +83,9 @@ namespace OSBuilder.DiskLayouts
 
             ulong sectorInCylinderStart = (fileSystem.GetSectorStart() % sectorsPerTrack) + 1;
             ulong sectorInCylinderEnd = (fileSystem.GetSectorStart() % sectorsPerTrack) + 1;
-            Console.WriteLine("partiton CHS start - " + cylinderOfStart.ToString() +
+            Utils.Logger.Instance.Debug("partiton CHS start - " + cylinderOfStart.ToString() +
                 "/" + headOfStart.ToString() + "/" + sectorInCylinderStart.ToString());
-            Console.WriteLine("partiton CHS end   - " + cylinderOfEnd.ToString() +
+            Utils.Logger.Instance.Debug("partiton CHS end   - " + cylinderOfEnd.ToString() +
                 "/" + headOfEnd.ToString() + "/" + sectorInCylinderEnd.ToString());
 
             uint sectorOfStart = fileSystem.GetSectorStart() > uint.MaxValue ? uint.MaxValue : (uint)fileSystem.GetSectorStart();
@@ -129,7 +129,7 @@ namespace OSBuilder.DiskLayouts
         private void FinalizeLayout()
         {
             // Load up mbr and build the partition table
-            Console.WriteLine($"{nameof(MBR)} | {nameof(FinalizeLayout)} | Loading mbr (mbr.vbr)");
+            Utils.Logger.Instance.Info($"{nameof(MBR)} | {nameof(FinalizeLayout)} | Loading mbr (mbr.vbr)");
             byte[] mbr = ResourceLoader.Load("mbr.vbr");
             
             // Install partitions in the MBR
@@ -160,7 +160,7 @@ namespace OSBuilder.DiskLayouts
             if (GetFreeSectorCount() < partitionSize)
             {
                 partitionSize = GetFreeSectorCount();
-                Console.WriteLine("AddPartition - not enough space, reducing partition size to " + partitionSize + " sectors");
+                Utils.Logger.Instance.Warning("AddPartition - not enough space, reducing partition size to " + partitionSize + " sectors");
             }
 
             // Initialize the file-system
