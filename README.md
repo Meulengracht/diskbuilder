@@ -46,6 +46,7 @@ When installing from snap you might need to connect two additional plugs to get 
 ```
 snap connect diskbuilder:process-control
 snap connect diskbuilder:mount-observe
+snap connect diskbuilder:home
 ```
 
 You can now create disk images by executing the following command
