@@ -25,5 +25,5 @@ parts:
   osbuilder-src:
     source: osbuilder
     plugin: dotnet
-    dotnet-version: 3.1
-    dotnet-runtime-version: 3.1.0
+    dotnet-version: 6.0
+    dotnet-runtime-version: 6.0.0
