@@ -470,16 +470,13 @@ namespace OSBuilder.FileSystems.MFS
                 
                 // find the token in the bucket
                 record = FindRecord(startBucket, token);
-                if (record == null)
-                {
-                    Utils.Logger.Instance.Error($"Failed to find record {token} in path {safePath}");
+                if (record == null) {
                     return null;
                 }
 
                 // make sure record is a directory, should be if we just
                 // created it tho
-                if (!record.Flags.HasFlag(RecordFlags.Directory))
-                {
+                if (!record.Flags.HasFlag(RecordFlags.Directory)) {
                     Utils.Logger.Instance.Error($"Record {token} in path {safePath} is not a directory");
                     record = null;
                     break;
@@ -935,7 +932,7 @@ namespace OSBuilder.FileSystems.MFS
             var record = FindPath(rootBucket, localPath);
             if (record == null)
             {
-                Utils.Logger.Instance.Info("/" + localPath + " is a new " 
+                Utils.Logger.Instance.Debug("/" + localPath + " is a new "
                     + (fileFlags.HasFlag(FileFlags.Directory) ? "directory" : "file"));
                 record = CreatePath(rootBucket, localPath, fileFlags);
                 if (record == null) {
